@@ -2347,7 +2347,10 @@ typedef enum VolumeToMeshFlag {
 typedef struct ClothBWModifierData {
   ModifierData modifier;
 
-  struct Object * object;
+  struct Object *object;
+
+  void *simulator_object;
+
 } ClothBWModifierData;
 
 #ifdef __cplusplus
