@@ -18,15 +18,12 @@
  * \ingroup modifiers
  */
 
-#include <vector>
-
+#include "BKE_cloth_simulator_baraff_witkin.hh"
 #include "BKE_lib_query.h"
 #include "BKE_mesh.h"
 #include "BKE_mesh_runtime.h"
 #include "BKE_modifier.h"
 #include "BKE_pointcache.h"
-#include "BKE_volume.h"
-#include "BKE_volume_to_mesh.hh"
 
 #include "MOD_modifiertypes.h"
 #include "MOD_ui_common.h"
@@ -43,7 +40,6 @@
 
 #include "RNA_access.h"
 
-#include "BLI_float4x4.hh"
 #include "BLI_math_vector.h"
 #include "BLI_span.hh"
 #include "BLI_timeit.hh"
@@ -55,8 +51,11 @@ static void initData(ModifierData *md)
   std::cout << "Start: " << __func__ << std::endl;
   UNUSED_VARS(md);
 
-  //   ClothBWModifierData *cbwmd = reinterpret_cast<ClothBWModifierData *>(cbwmd);
+  ClothBWModifierData *cbwmd = reinterpret_cast<ClothBWModifierData *>(md);
   //   cbwmd->object = nullptr;
+
+  ClothSimulatorBaraffWitkin simulator = ClothSimulatorBaraffWitkin();
+  cbwmd->simulator_object = &simulator;
 
   std::cout << "End: " << __func__ << std::endl;
 }
@@ -80,15 +79,12 @@ static void updateDepsgraph(ModifierData *md, const ModifierUpdateDepsgraphConte
 static void panel_draw(const bContext *UNUSED(C), Panel *panel)
 {
   uiLayout *layout = panel->layout;
-
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
   uiLayoutSetPropSep(layout, true);
-
   {
     uiLayout *col = uiLayoutColumn(layout, false);
     uiItemR(col, ptr, "object", 0, nullptr, ICON_NONE);
   }
-
   modifier_panel_end(layout, ptr);
 }
 
@@ -100,17 +96,27 @@ static void panelRegister(ARegionType *region_type)
 
 static Mesh *modifyMesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
 {
-  int framenr = DEG_get_ctime(ctx->depsgraph);
-  std::cout << framenr << ": " << __func__ << std::endl;
+  ClothBWModifierData *cbwmd = reinterpret_cast<ClothBWModifierData *>(md);
+  ClothSimulatorBaraffWitkin *simulator = reinterpret_cast<ClothSimulatorBaraffWitkin *>(
+      cbwmd->simulator_object);
 
-  const MLoopTri *looptris = BKE_mesh_runtime_looptri_ensure(const_cast<Mesh *>(mesh));
-  const int looptris_len = BKE_mesh_runtime_looptri_len(mesh);
+  int framenr = DEG_get_ctime(ctx->depsgraph);
+
+  if (framenr == 0) {
+
+    simulator->initialize();
+    return mesh;
+  }
+
+  //   const MLoopTri *looptris = BKE_mesh_runtime_looptri_ensure(const_cast<Mesh *>(mesh));
+  //   const int looptris_len = BKE_mesh_runtime_looptri_len(mesh);
+
+  simulator->step();
 
   for (int i = 0; i < mesh->totvert; i++) {
     mesh->mvert[i].co[2] += 0.1;
   }
 
-  UNUSED_VARS(md);
   return mesh;
 }
 
