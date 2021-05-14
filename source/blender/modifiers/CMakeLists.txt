@@ -54,6 +54,7 @@ set(SRC
   intern/MOD_build.c
   intern/MOD_cast.c
   intern/MOD_cloth.c
+  intern/MOD_clothbw.cc
   intern/MOD_collision.c
   intern/MOD_correctivesmooth.c
   intern/MOD_curve.c

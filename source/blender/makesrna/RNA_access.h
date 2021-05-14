@@ -109,6 +109,7 @@ extern StructRNA RNA_CastModifier;
 extern StructRNA RNA_ChildOfConstraint;
 extern StructRNA RNA_ChildParticle;
 extern StructRNA RNA_ClampToConstraint;
+extern StructRNA RNA_ClothBWModifier;
 extern StructRNA RNA_ClothCollisionSettings;
 extern StructRNA RNA_ClothModifier;
 extern StructRNA RNA_ClothSettings;

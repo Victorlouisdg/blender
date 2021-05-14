@@ -287,6 +287,7 @@ const EnumPropertyItem rna_enum_object_modifier_type_items[] = {
      "Deform volume based on noise or other vector fields"}, /* TODO: Use correct icon. */
     {0, "", 0, N_("Physics"), ""},
     {eModifierType_Cloth, "CLOTH", ICON_MOD_CLOTH, "Cloth", ""},
+    {eModifierType_ClothBW, "CLOTHBW", ICON_MOD_CLOTH, "ClothBW", ""},
     {eModifierType_Collision, "COLLISION", ICON_MOD_PHYSICS, "Collision", ""},
     {eModifierType_DynamicPaint, "DYNAMIC_PAINT", ICON_MOD_DYNAMICPAINT, "Dynamic Paint", ""},
     {eModifierType_Explode,
@@ -7220,6 +7221,24 @@ static void rna_def_modifier_volume_to_mesh(BlenderRNA *brna)
   RNA_define_lib_overridable(false);
 }
 
+static void rna_def_modifier_clothbw(BlenderRNA *brna)
+{
+  StructRNA *srna;
+  PropertyRNA *prop;
+
+  srna = RNA_def_struct(brna, "ClothBWModifier", "Modifier");
+  RNA_def_struct_ui_text(srna, "ClothBWModifier", "");
+  RNA_def_struct_sdna(srna, "ClothBWModifierData");
+  RNA_def_struct_ui_icon(srna, ICON_MOD_CLOTH);
+
+  prop = RNA_def_property(srna, "object", PROP_POINTER, PROP_NONE);
+  RNA_def_property_ui_text(prop, "Object", "Object");
+  RNA_def_property_flag(prop, PROP_EDITABLE | PROP_ID_SELF_CHECK);
+  RNA_def_property_update(prop, 0, "rna_Modifier_dependency_update");
+
+  RNA_define_lib_overridable(false);
+}
+
 void RNA_def_modifier(BlenderRNA *brna)
 {
   StructRNA *srna;
@@ -7361,6 +7380,7 @@ void RNA_def_modifier(BlenderRNA *brna)
   rna_def_modifier_mesh_to_volume(brna);
   rna_def_modifier_volume_displace(brna);
   rna_def_modifier_volume_to_mesh(brna);
+  rna_def_modifier_clothbw(brna);
 }
 
 #endif
