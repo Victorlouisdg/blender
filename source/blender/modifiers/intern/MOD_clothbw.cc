@@ -50,35 +50,32 @@
 
 static void initData(ModifierData *md)
 {
-  ClothBWModifierData *cbwmd = reinterpret_cast<ClothBWModifierData *>(cbwmd);
-  cbwmd->object = nullptr;
+  std::cout << "Start: " << __func__ << std::endl;
+  UNUSED_VARS(md);
+
+  //   ClothBWModifierData *cbwmd = reinterpret_cast<ClothBWModifierData *>(cbwmd);
+  //   cbwmd->object = nullptr;
+
+  std::cout << "End: " << __func__ << std::endl;
 }
 
 static void updateDepsgraph(ModifierData *md, const ModifierUpdateDepsgraphContext *ctx)
 {
-  //   VolumeToMeshModifierData *vmmd = reinterpret_cast<VolumeToMeshModifierData *>(md);
-  //   DEG_add_modifier_to_transform_relation(ctx->node, "Volume to Mesh Modifier");
-  //   if (vmmd->object) {
-  //     DEG_add_object_relation(
-  //         ctx->node, vmmd->object, DEG_OB_COMP_GEOMETRY, "Volume to Mesh Modifier");
-  //     DEG_add_object_relation(
-  //         ctx->node, vmmd->object, DEG_OB_COMP_TRANSFORM, "Volume to Mesh Modifier");
-  //   }
-}
-
-static void foreachIDLink(ModifierData *md, Object *ob, IDWalkFunc walk, void *userData)
-{
-  ClothBWModifierData *cbwmd = reinterpret_cast<ClothBWModifierData *>(cbwmd);
-  walk(userData, ob, (ID **)&cbwmd->object, IDWALK_CB_NOP);
+  std::cout << __func__ << std::endl;
+  ClothBWModifierData *cbwmd = reinterpret_cast<ClothBWModifierData *>(md);
+  DEG_add_modifier_to_transform_relation(ctx->node, "ClothBW Modifier");
+  if (cbwmd->object) {
+    DEG_add_object_relation(ctx->node, cbwmd->object, DEG_OB_COMP_GEOMETRY, "ClothBW Modifier");
+    DEG_add_object_relation(ctx->node, cbwmd->object, DEG_OB_COMP_TRANSFORM, "ClothBW Modifier");
+  }
 }
 
 static void panel_draw(const bContext *UNUSED(C), Panel *panel)
 {
+  std::cout << __func__ << std::endl;
   uiLayout *layout = panel->layout;
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
-  ClothBWModifierData *cbwmd = static_cast<ClothBWModifierData *>(ptr->data);
-
   uiLayoutSetPropSep(layout, true);
 
   {
@@ -91,24 +88,19 @@ static void panel_draw(const bContext *UNUSED(C), Panel *panel)
 
 static void panelRegister(ARegionType *region_type)
 {
+  std::cout << __func__ << std::endl;
   modifier_panel_register(region_type, eModifierType_ClothBW, panel_draw);
-}
-
-static Mesh *create_empty_mesh(const Mesh *input_mesh)
-{
-  Mesh *new_mesh = BKE_mesh_new_nomain(0, 0, 0, 0, 0);
-  BKE_mesh_copy_settings(new_mesh, input_mesh);
-  return new_mesh;
 }
 
 static Mesh *modifyMesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *input_mesh)
 {
+  std::cout << __func__ << std::endl;
   UNUSED_VARS(md);
-  BKE_modifier_set_error(ctx->object, md, "Compiled without OpenVDB");
-  return create_empty_mesh(input_mesh);
+  UNUSED_VARS(ctx);
+  return input_mesh;
 }
 
-ModifierTypeInfo modifierType_VolumeToMesh = {
+ModifierTypeInfo modifierType_ClothBW = {
     /* name */ "ClothBW",
     /* structName */ "ClothBWModifierData",
     /* structSize */ sizeof(ClothBWModifierData),
@@ -134,7 +126,7 @@ ModifierTypeInfo modifierType_VolumeToMesh = {
     /* updateDepsgraph */ updateDepsgraph,
     /* dependsOnTime */ nullptr,
     /* dependsOnNormals */ nullptr,
-    /* foreachIDLink */ foreachIDLink,
+    /* foreachIDLink */ nullptr,
     /* foreachTexLink */ nullptr,
     /* freeRuntimeData */ nullptr,
     /* panelRegister */ panelRegister,
