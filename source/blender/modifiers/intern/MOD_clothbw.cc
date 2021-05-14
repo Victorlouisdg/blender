@@ -22,7 +22,9 @@
 
 #include "BKE_lib_query.h"
 #include "BKE_mesh.h"
+#include "BKE_mesh_runtime.h"
 #include "BKE_modifier.h"
+#include "BKE_pointcache.h"
 #include "BKE_volume.h"
 #include "BKE_volume_to_mesh.hh"
 
@@ -59,6 +61,11 @@ static void initData(ModifierData *md)
   std::cout << "End: " << __func__ << std::endl;
 }
 
+static bool dependsOnTime(ModifierData *UNUSED(md))
+{
+  return true;
+}
+
 static void updateDepsgraph(ModifierData *md, const ModifierUpdateDepsgraphContext *ctx)
 {
   std::cout << __func__ << std::endl;
@@ -72,7 +79,6 @@ static void updateDepsgraph(ModifierData *md, const ModifierUpdateDepsgraphConte
 
 static void panel_draw(const bContext *UNUSED(C), Panel *panel)
 {
-  std::cout << __func__ << std::endl;
   uiLayout *layout = panel->layout;
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
@@ -92,12 +98,20 @@ static void panelRegister(ARegionType *region_type)
   modifier_panel_register(region_type, eModifierType_ClothBW, panel_draw);
 }
 
-static Mesh *modifyMesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *input_mesh)
+static Mesh *modifyMesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
 {
-  std::cout << __func__ << std::endl;
+  int framenr = DEG_get_ctime(ctx->depsgraph);
+  std::cout << framenr << ": " << __func__ << std::endl;
+
+  const MLoopTri *looptris = BKE_mesh_runtime_looptri_ensure(const_cast<Mesh *>(mesh));
+  const int looptris_len = BKE_mesh_runtime_looptri_len(mesh);
+
+  for (int i = 0; i < mesh->totvert; i++) {
+    mesh->mvert[i].co[2] += 0.1;
+  }
+
   UNUSED_VARS(md);
-  UNUSED_VARS(ctx);
-  return input_mesh;
+  return mesh;
 }
 
 ModifierTypeInfo modifierType_ClothBW = {
@@ -124,7 +138,7 @@ ModifierTypeInfo modifierType_ClothBW = {
     /* freeData */ nullptr,
     /* isDisabled */ nullptr,
     /* updateDepsgraph */ updateDepsgraph,
-    /* dependsOnTime */ nullptr,
+    /* dependsOnTime */ dependsOnTime,
     /* dependsOnNormals */ nullptr,
     /* foreachIDLink */ nullptr,
     /* foreachTexLink */ nullptr,
