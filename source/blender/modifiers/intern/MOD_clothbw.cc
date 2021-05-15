@@ -46,33 +46,38 @@
 
 #include "DEG_depsgraph_query.h"
 
-static void initData(ModifierData *md)
+using blender::Span;
+
+/* The static simulator is a temporary solution. I tried instancing the simulator in initData() and
+ * storing a pointer to it in the ModifierData, but this lead to segfaults because the simulator
+ * was destructed too early. */
+static ClothSimulatorBaraffWitkin simulator = ClothSimulatorBaraffWitkin();
+
+static void initData(ModifierData *modifier_data)
 {
-  std::cout << "Start: " << __func__ << std::endl;
-  UNUSED_VARS(md);
-
-  ClothBWModifierData *cbwmd = reinterpret_cast<ClothBWModifierData *>(md);
-  //   cbwmd->object = nullptr;
-
-  ClothSimulatorBaraffWitkin simulator = ClothSimulatorBaraffWitkin();
-  cbwmd->simulator_object = &simulator;
-
-  std::cout << "End: " << __func__ << std::endl;
+  UNUSED_VARS(modifier_data);
+  // ClothBWModifierData *clothbw_modifier_data = reinterpret_cast<ClothBWModifierData
+  // *>(modifier_data); ClothSimulatorBaraffWitkin simulator = ClothSimulatorBaraffWitkin();
+  // clothbw_modifier_data->simulator_object = &simulator;
+  // simulator = ClothSimulatorBaraffWitkin();
 }
 
-static bool dependsOnTime(ModifierData *UNUSED(md))
+static bool dependsOnTime(ModifierData *UNUSED(modifier_data))
 {
   return true;
 }
 
-static void updateDepsgraph(ModifierData *md, const ModifierUpdateDepsgraphContext *ctx)
+static void updateDepsgraph(ModifierData *modifier_data, const ModifierUpdateDepsgraphContext *ctx)
 {
   std::cout << __func__ << std::endl;
-  ClothBWModifierData *cbwmd = reinterpret_cast<ClothBWModifierData *>(md);
+  ClothBWModifierData *clothbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(
+      modifier_data);
   DEG_add_modifier_to_transform_relation(ctx->node, "ClothBW Modifier");
-  if (cbwmd->object) {
-    DEG_add_object_relation(ctx->node, cbwmd->object, DEG_OB_COMP_GEOMETRY, "ClothBW Modifier");
-    DEG_add_object_relation(ctx->node, cbwmd->object, DEG_OB_COMP_TRANSFORM, "ClothBW Modifier");
+  if (clothbw_modifier_data->object) {
+    DEG_add_object_relation(
+        ctx->node, clothbw_modifier_data->object, DEG_OB_COMP_GEOMETRY, "ClothBW Modifier");
+    DEG_add_object_relation(
+        ctx->node, clothbw_modifier_data->object, DEG_OB_COMP_TRANSFORM, "ClothBW Modifier");
   }
 }
 
@@ -94,24 +99,24 @@ static void panelRegister(ARegionType *region_type)
   modifier_panel_register(region_type, eModifierType_ClothBW, panel_draw);
 }
 
-static Mesh *modifyMesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
+static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *ctx, Mesh *mesh)
 {
-  ClothBWModifierData *cbwmd = reinterpret_cast<ClothBWModifierData *>(md);
-  ClothSimulatorBaraffWitkin *simulator = reinterpret_cast<ClothSimulatorBaraffWitkin *>(
-      cbwmd->simulator_object);
+  ClothBWModifierData *clothbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(
+      modifier_data);
+  UNUSED_VARS(clothbw_modifier_data);
 
+  // ClothSimulatorBaraffWitkin *simulator = reinterpret_cast<ClothSimulatorBaraffWitkin *>(
+  //     clothbw_modifier_data->simulator_object);
+
+  /* TODO: figure out how the caching system works. */
   int framenr = DEG_get_ctime(ctx->depsgraph);
 
-  if (framenr == 0) {
-
-    simulator->initialize();
+  if (framenr == 1) {
+    simulator.initialize(*mesh);
     return mesh;
   }
 
-  //   const MLoopTri *looptris = BKE_mesh_runtime_looptri_ensure(const_cast<Mesh *>(mesh));
-  //   const int looptris_len = BKE_mesh_runtime_looptri_len(mesh);
-
-  simulator->step();
+  simulator.step();
 
   for (int i = 0; i < mesh->totvert; i++) {
     mesh->mvert[i].co[2] += 0.1;
