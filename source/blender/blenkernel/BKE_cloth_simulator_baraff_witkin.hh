@@ -4,6 +4,8 @@
 #include "BLI_float2.hh"
 #include "BLI_float2x2.hh"
 #include "BLI_float3.hh"
+#include "BLI_float3x3.hh"
+#include "BLI_sparse_matrix.hh"
 
 #include "BLI_index_range.hh"
 
@@ -21,8 +23,10 @@ using blender::Array;
 using blender::float2;
 using blender::float2x2;
 using blender::float3;
+using blender::float3x3;
 using blender::IndexRange;
 using blender::Span;
+using blender::SparseMatrix;
 
 /* Utilities */
 
@@ -34,32 +38,6 @@ static Span<MLoopTri> get_mesh_looptris(const Mesh &mesh)
   const int looptris_len = BKE_mesh_runtime_looptri_len(&mesh);
   return {looptris, looptris_len};
 }
-
-/* Adapted from multires_unsubdivide. */
-// static BMesh *get_bmesh_from_mesh(const Mesh *mesh)
-// {
-//   const BMAllocTemplate allocsize = BMALLOC_TEMPLATE_FROM_ME(mesh);
-//   BMesh *bmesh = BM_mesh_create(&allocsize,
-//                                 &((struct BMeshCreateParams){
-//                                     .use_toolflags = true,
-//                                 }));
-
-//   BM_mesh_bm_from_me(bmesh,
-//                      mesh,
-//                      (&(struct BMeshFromMeshParams){
-//                          .calc_face_normal = true,
-//                      }));
-
-//   return bmesh;
-// }
-
-// BMIter viter, eiter, fiter;
-// BMFace *f = NULL;
-
-// // BMesh *bmesh = get_bmesh_from_mesh(&mesh);
-
-// BM_ITER_MESH (f, &fiter, bmesh, BM_FACES_OF_MESH) {
-// }
 
 /* Cloth Simulator based off of the popular paper "Large steps in cloth simulation."
  * by Baraff and Witkin, hence the name. In comments below Ithis paper is referred to
@@ -93,6 +71,7 @@ class ClothSimulatorBaraffWitkin {
   /* Note about the "uv" in the names above. */
 
   /* Datastructures for intermediate computations. */
+  SparseMatrix vertex_force_derivatives;  // <float3x3>
   Array<float3> vertex_forces;
 
   /* Precomputed quantities. */
@@ -100,13 +79,19 @@ class ClothSimulatorBaraffWitkin {
   Array<float> triangle_wu_derivatives;
   Array<float> triangle_wv_derivatives;
 
-  /* I decided that the simulator should have it's own local copy of the necessary
-   * mesh attributes. I'll make setters() for certain attributes later that do
-   * the required recalculations.
+  /* Currently the simulator has its own local copy of all the necessary
+   * mesh attributes e.g. vertex positions. This was easier to implement and I believe could make
+   * the simulator faster due to better data locality. I'll make setters() for certain attributes
+   * later that do the required recalculations.
    */
   void initialize(const Mesh &mesh)
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
+
+
+    n_vertices = mesh.totvert;
+
+    vertex_force_derivatives = SparseMatrix(n_vertices);
 
     initialize_vertex_attributes(mesh);
     initialize_triangle_attributes(mesh);
@@ -114,7 +99,6 @@ class ClothSimulatorBaraffWitkin {
 
   void initialize_vertex_attributes(const Mesh &mesh)
   {
-    n_vertices = mesh.totvert;
 
     vertex_positions = Array<float3>(n_vertices);
     vertex_velocities = Array<float3>(n_vertices, float3(0.0f));
