@@ -30,6 +30,44 @@ using blender::SparseMatrix;
 
 /* Utilities */
 
+struct int3 {
+  int i, j, k;
+
+  int3() = default;
+
+  int3(const int *ptr) : i{ptr[0]}, j{ptr[1]}, k{ptr[2]}
+  {
+  }
+
+  int3(int i, int j, int k) : i{i}, j{j}, k{k}
+  {
+  }
+
+  operator int *()
+  {
+    return &i;
+  }
+};
+
+struct int4 {
+  int i, j, k, l;
+
+  int4() = default;
+
+  int4(const int *ptr) : i{ptr[0]}, j{ptr[1]}, k{ptr[2]}, l{ptr[3]}
+  {
+  }
+
+  int4(int i, int j, int k, int l) : i{i}, j{j}, k{k}, l{l}
+  {
+  }
+
+  operator int *()
+  {
+    return &i;
+  }
+};
+
 /* Copied from point_distirbute. */
 static Span<MLoopTri> get_mesh_looptris(const Mesh &mesh)
 {
@@ -57,8 +95,8 @@ class ClothSimulatorBaraffWitkin {
   Array<float3> vertex_velocities;
 
   /* Indices */
-  Array<std::tuple<int, int, int>> triangle_vertex_indices;
-  Array<std::tuple<int, int, int, int>> bending_vertex_indices;
+  Array<int3> triangle_vertex_indices;
+  Array<int4> bending_vertex_indices;
 
   /* Parameters / Configuration */
 
@@ -76,17 +114,23 @@ class ClothSimulatorBaraffWitkin {
   Array<float> triangle_areas_uv;
   Array<float3> edges_normals;
 
-  float density = 0.2f; /* in kg/m^2*/
+  float density = 0.2f;            /* in kg/m^2*/
+  float standard_gravity = -9.81f; /* in m/s^2*/
 
   /* Datastructures for intermediate computations. */
   SparseMatrix vertex_force_derivatives;  // <float3x3> elements
   Array<float3> vertex_forces;
   Array<float3> triangle_normals;
+  /* The inverted mass matrix is stored as an Array because it's a diagonal matrix.
+   * It's components are float3 instead of float so we can use the "mass modification"
+   * technique on it's components to make vertices immovable in certain directions.
+   */
+  Array<float3> vertex_mass_matrix_inverted;
 
   /* Precomputed quantities. */
   Array<float2x2> triangle_inverted_delta_u_matrices;
-  Array<float> triangle_wu_derivatives;
-  Array<float> triangle_wv_derivatives;
+  Array<float3> triangle_wu_derivatives;
+  Array<float3> triangle_wv_derivatives;
 
   /* Currently the simulator has its own local copy of all the necessary
    * mesh attributes e.g. vertex positions. This was easier to implement and I believe could make
@@ -136,9 +180,12 @@ class ClothSimulatorBaraffWitkin {
     Span<MLoopTri> looptris = get_mesh_looptris(mesh);
     n_triangles = looptris.size();
 
+    triangle_vertex_indices = Array<int3>(n_triangles);
     triangle_areas_uv = Array<float>(n_triangles);
     triangle_normals = Array<float3>(n_triangles);
     triangle_inverted_delta_u_matrices = Array<float2x2>(n_triangles);
+    triangle_wu_derivatives = Array<float3>(n_triangles);
+    triangle_wv_derivatives = Array<float3>(n_triangles);
 
     for (const int looptri_index : looptris.index_range()) {
       const MLoopTri &looptri = looptris[looptri_index];
@@ -151,6 +198,8 @@ class ClothSimulatorBaraffWitkin {
       const float3 v0_pos = vertex_positions[v0_index];
       const float3 v1_pos = vertex_positions[v1_index];
       const float3 v2_pos = vertex_positions[v2_index];
+
+      triangle_vertex_indices[looptri_index] = {v0_index, v1_index, v2_index};
 
       const float3 normal = float3::cross(v1_pos - v0_pos, v2_pos - v0_pos);
       /* Storing this normal is not that useful because it will probablty need to be recalculated.
@@ -186,21 +235,110 @@ class ClothSimulatorBaraffWitkin {
       float delta_v1 = v1 - v0;
       float delta_v2 = v2 - v0;
 
-      /* If anyone knows how to this in one line, let me know. */
+      /* If anyone knows how to do this in one line, let me know. */
       float array[2][2] = {{delta_u1, delta_u2}, {delta_v1, delta_v2}};
       float2x2 delta_u = float2x2(array);
       triangle_inverted_delta_u_matrices[looptri_index] = delta_u.inverted();
 
       float dw_denominator = 1.0f / (delta_u1 * delta_v2 - delta_u2 * delta_v1);
 
-      float dwu_dx0 = (delta_v1 - delta_v2) * dw_denominator;
+      float3 dwu_dx;
+      dwu_dx[0] = (delta_v1 - delta_v2) * dw_denominator;
+      dwu_dx[1] = delta_v2 * dw_denominator;
+      dwu_dx[2] = -delta_v1 * dw_denominator;
+
+      float3 dwv_dx;
+      dwv_dx[0] = (delta_u2 - delta_u1) * dw_denominator;
+      dwv_dx[1] = -delta_u2 * dw_denominator;
+      dwv_dx[2] = delta_u1 * dw_denominator;
+
+      triangle_wu_derivatives[looptri_index] = dwu_dx;
+      triangle_wv_derivatives[looptri_index] = dwv_dx;
     }
   };
 
   void step()
   {
     std::cout << "Cloth simulation step" << std::endl;
+    reset_forces_and_derivatives();
+    calculate_forces_and_derivatives();
+
+    for (int i : IndexRange(n_vertices)) {
+      vertex_mass_matrix_inverted[i] = float3(vertex_masses[i]);
+      /* TODO later set mass of pinned vertices to zero etc. */
+    }
   };
+
+  void reset_forces_and_derivatives()
+  {
+    vertex_forces.fill(float3(0.0f));
+  }
+
+  void calculate_forces_and_derivatives()
+  {
+    for (int vertex_index : IndexRange(n_vertices)) {
+      calculate_gravity(vertex_index);
+    }
+
+    for (int triangle_index : IndexRange(n_triangles)) {
+      auto [wu, wv] = calculate_w_uv(triangle_index);
+      calculate_stretch(triangle_index, wu, wv);
+    }
+  }
+
+  std::tuple<float3, float3> calculate_w_uv(int triangle_index)
+  {
+    auto [v0_index, v1_index, v2_index] = triangle_vertex_indices[triangle_index];
+    float3 x0 = vertex_positions[v0_index];
+    float3 x1 = vertex_positions[v1_index];
+    float3 x2 = vertex_positions[v2_index];
+
+    float3 delta_x1 = x1 - x0;
+    float3 delta_x2 = x2 - x0;
+
+    float2x2 delta_u = triangle_inverted_delta_u_matrices[triangle_index];
+
+    /* This is basically a hard coded 3x2 @ 2x2 matrix multiplication.
+     * I didn't want to create a float3x2 class specifically for this.
+     */
+    float wu0 = delta_x1[0] * delta_u.values[0][0] + delta_x2[0] * delta_u.values[1][0];
+    float wu1 = delta_x1[1] * delta_u.values[0][0] + delta_x2[1] * delta_u.values[1][0];
+    float wu2 = delta_x1[2] * delta_u.values[0][0] + delta_x2[2] * delta_u.values[1][0];
+    float wv0 = delta_x1[0] * delta_u.values[0][1] + delta_x2[0] * delta_u.values[1][1];
+    float wv1 = delta_x1[1] * delta_u.values[0][1] + delta_x2[1] * delta_u.values[1][1];
+    float wv2 = delta_x1[2] * delta_u.values[0][1] + delta_x2[2] * delta_u.values[1][1];
+
+    float3 wu = float3(wu0, wu1, wu2);
+    float3 wv = float3(wv0, wv1, wv2);
+
+    return {wu, wv};
+  }
+
+  void calculate_gravity(int vertex_index)
+  {
+    float3 gravity = float3(0.0f);
+    gravity.z = vertex_masses[vertex_index] * standard_gravity;  // F_grav = m * g
+    vertex_forces[vertex_index] += gravity;
+  }
+
+  void calculate_stretch(int triangle_index, float3 wu, float3 wv)
+  {
+    float area_uv = triangle_areas_uv[triangle_index];
+
+    float wu_norm = wu.normalize_and_get_length();
+    float wv_norm = wv.normalize_and_get_length();
+
+    float Cu = area_uv * (wu_norm - 1.0);
+    float Cv = area_uv * (wv_norm - 1.0);
+
+    int3 vertex_indices = triangle_vertex_indices[triangle_index];
+    float3 dwu_dx = triangle_wu_derivatives[triangle_index];
+    float3 dwv_dx = triangle_wv_derivatives[triangle_index];
+
+    for (int m : IndexRange(3)) {
+      int vertex_index = vertex_indices[m];
+    }
+  }
 
   ClothSimulatorBaraffWitkin()
   {
