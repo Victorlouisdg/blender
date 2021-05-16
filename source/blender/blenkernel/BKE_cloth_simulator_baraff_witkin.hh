@@ -61,18 +61,27 @@ class ClothSimulatorBaraffWitkin {
   Array<std::tuple<int, int, int, int>> bending_vertex_indices;
 
   /* Parameters / Configuration */
-  Array<float2> vertex_positions_uv;
+
+  /* Note about the "uv" in the names below: these letters are what's used in the original paper.
+   * These uv coordinates is used to represent the 2D rest state of the cloth, and should thus not
+   * necessarily be shared with the uv coordinates for texturing.
+   *
+   * A more descriptive name for vertex_positions_uv would have been vertex_rest_positions_2D.
+   */
+  Array<float2>
+      vertex_positions_uv;  // This is only needed for initialization so maybe should be removed.
   Array<float> vertex_masses;
-  Array<float3> triangle_normals;
   Array<float> triangle_stretch_stiffness_u;
   Array<float> triangle_stretch_stiffness_v;
   Array<float> triangle_areas_uv;
   Array<float3> edges_normals;
-  /* Note about the "uv" in the names above. */
+
+  float density = 0.2f; /* in kg/m^2*/
 
   /* Datastructures for intermediate computations. */
-  SparseMatrix vertex_force_derivatives;  // <float3x3>
+  SparseMatrix vertex_force_derivatives;  // <float3x3> elements
   Array<float3> vertex_forces;
+  Array<float3> triangle_normals;
 
   /* Precomputed quantities. */
   Array<float2x2> triangle_inverted_delta_u_matrices;
@@ -88,7 +97,6 @@ class ClothSimulatorBaraffWitkin {
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
 
-
     n_vertices = mesh.totvert;
 
     vertex_force_derivatives = SparseMatrix(n_vertices);
@@ -99,20 +107,39 @@ class ClothSimulatorBaraffWitkin {
 
   void initialize_vertex_attributes(const Mesh &mesh)
   {
-
     vertex_positions = Array<float3>(n_vertices);
     vertex_velocities = Array<float3>(n_vertices, float3(0.0f));
     vertex_forces = Array<float3>(n_vertices, float3(0.0f));
+    vertex_positions_uv = Array<float2>(n_vertices);
 
     for (const int i : IndexRange(mesh.totvert)) {
       MVert vertex = mesh.mvert[i];
       vertex_positions[i] = vertex.co;
     }
+
+    /* TODO: rethink this UV position initialization in the context of seams/multiple cloth pieces.
+     */
+    for (const int i : IndexRange(mesh.totloop)) {
+      const MLoop &loop = mesh.mloop[i];
+      const float2 uv = mesh.mloopuv[i].uv;
+      vertex_positions_uv[loop.v] = uv;
+    }
   }
 
   void initialize_triangle_attributes(const Mesh &mesh)
   {
+    /* While technically a vertex attribute, the vertex_masses get initialized here because
+     * vertex mass is set based on the area of it's adjacent triangles.
+     */
+    vertex_masses = Array<float>(n_vertices, 0.0f);
+
     Span<MLoopTri> looptris = get_mesh_looptris(mesh);
+    n_triangles = looptris.size();
+
+    triangle_areas_uv = Array<float>(n_triangles);
+    triangle_normals = Array<float3>(n_triangles);
+    triangle_inverted_delta_u_matrices = Array<float2x2>(n_triangles);
+
     for (const int looptri_index : looptris.index_range()) {
       const MLoopTri &looptri = looptris[looptri_index];
       const int v0_loop = looptri.tri[0];
@@ -121,15 +148,52 @@ class ClothSimulatorBaraffWitkin {
       const int v0_index = mesh.mloop[v0_loop].v;
       const int v1_index = mesh.mloop[v1_loop].v;
       const int v2_index = mesh.mloop[v2_loop].v;
-      const float3 v0 = vertex_positions[v0_index];
-      const float3 v1 = vertex_positions[v1_index];
-      const float3 v2 = vertex_positions[v2_index];
+      const float3 v0_pos = vertex_positions[v0_index];
+      const float3 v1_pos = vertex_positions[v1_index];
+      const float3 v2_pos = vertex_positions[v2_index];
 
-      const float3 normal = float3::cross(v1 - v0, v2 - v0);
+      const float3 normal = float3::cross(v1_pos - v0_pos, v2_pos - v0_pos);
+      /* Storing this normal is not that useful because it will probablty need to be recalculated.
+       */
+      triangle_normals[looptri_index] = normal;
+
+      /* The length of the cross product vector is equal to the area of the parallelogram spanned
+       * by the two input vectors, the triangle area is conveniently half of this area. */
       const float triangle_area_uv = normal.length() / 2;
+      triangle_areas_uv[looptri_index] = triangle_area_uv;
 
-      std::cout << "normal" << normal << std::endl;
-      std::cout << "triangle_area_uv" << triangle_area_uv << std::endl;
+      /* This particular way of initializing vertex mass is described in BW98 section 2.2.
+       * Different methods could definitely be tried, when Simulation nodes comes, vertex_mass
+       * could even just be an attribute provided by the user.  */
+      float vertex_mass = density * triangle_area_uv / 3.0f;
+      vertex_masses[v0_index] += vertex_mass;
+      vertex_masses[v1_index] += vertex_mass;
+      vertex_masses[v2_index] += vertex_mass;
+
+      float2 uv0 = vertex_positions_uv[v0_index];
+      float2 uv1 = vertex_positions_uv[v1_index];
+      float2 uv2 = vertex_positions_uv[v2_index];
+
+      float u0 = uv0[0];
+      float u1 = uv1[0];
+      float u2 = uv2[0];
+      float v0 = uv0[1];
+      float v1 = uv1[1];
+      float v2 = uv2[1];
+
+      float delta_u1 = u1 - u0;
+      float delta_u2 = u2 - u0;
+      float delta_v1 = v1 - v0;
+      float delta_v2 = v2 - v0;
+
+      /* If anyone knows how to this in one line, let me know. */
+      float array[2][2] = {{delta_u1, delta_u2}, {delta_v1, delta_v2}};
+      float2x2 delta_u = float2x2(array);
+      triangle_inverted_delta_u_matrices[looptri_index] = delta_u.inverted();
+
+      float dw_denominator = 1.0f / (delta_u1 * delta_v2 - delta_u2 * delta_v1);
+
+      float dwu_dx0 = (delta_v1 - delta_v2) * dw_denominator;
     }
   };
 

@@ -22,9 +22,18 @@
 namespace blender {
 
 struct float2x2 {
-  float values[4][4];
+  float values[2][2];
 
   float2x2() = default;
+
+  float2x2(const float *matrix)
+  {
+    memcpy(values, matrix, sizeof(float) * 4);
+  }
+
+  float2x2(const float matrix[2][2]) : float2x2(static_cast<const float *>(matrix[0]))
+  {
+  }
 
   friend float2x2 operator*(const float2x2 &a, const float2 &b)
   {
@@ -33,11 +42,32 @@ struct float2x2 {
     return result;
   }
 
+  friend float2x2 operator*(const float s, const float2x2 &a)
+  {
+    float2x2 result;
+
+    for (int i = 0; i < 2; i++) {
+      for (int j = 0; j < 2; j++) {
+        result.values[i][j] = s * a.values[i][j];
+      }
+    }
+    return result;
+  }
+
   float2x2 inverted() const
   {
     float2x2 result;
-    // invert_m4_m4(result.values, values);
-    return result;
+
+    /* TODO: maybe move this to matrix_math.c? And check for division by zero. */
+    float a = values[0][0];
+    float b = values[0][1];
+    float c = values[1][0];
+    float d = values[1][1];
+
+    float array[2][2] = {{d, -b}, {-c, a}};
+    float determinant = a * d - b * c;
+
+    return (1.0f / determinant) * float2x2(array);
   }
 };
 

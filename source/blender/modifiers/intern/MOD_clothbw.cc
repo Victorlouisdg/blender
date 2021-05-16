@@ -53,11 +53,15 @@ using blender::Span;
  * was destructed too early. */
 static ClothSimulatorBaraffWitkin simulator = ClothSimulatorBaraffWitkin();
 
+// UNUSED_VARS(modifier_data);
+
 static void initData(ModifierData *modifier_data)
 {
   UNUSED_VARS(modifier_data);
-  // ClothBWModifierData *clothbw_modifier_data = reinterpret_cast<ClothBWModifierData
-  // *>(modifier_data); ClothSimulatorBaraffWitkin simulator = ClothSimulatorBaraffWitkin();
+
+  // ClothBWModifierData *clothbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(
+  //     modifier_data);
+  // ClothSimulatorBaraffWitkin simulator = ClothSimulatorBaraffWitkin();
   // clothbw_modifier_data->simulator_object = &simulator;
   // simulator = ClothSimulatorBaraffWitkin();
 }
