@@ -48,22 +48,13 @@
 
 using blender::Span;
 
-/* The static simulator is a temporary solution. I tried instancing the simulator in initData() and
- * storing a pointer to it in the ModifierData, but this lead to segfaults because the simulator
- * was destructed too early. */
-static ClothSimulatorBaraffWitkin simulator = ClothSimulatorBaraffWitkin();
-
-// UNUSED_VARS(modifier_data);
-
-static void initData(ModifierData *modifier_data)
+static void freeData(ModifierData *modifier_data)
 {
-  UNUSED_VARS(modifier_data);
-
-  // ClothBWModifierData *clothbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(
-  //     modifier_data);
-  // ClothSimulatorBaraffWitkin simulator = ClothSimulatorBaraffWitkin();
-  // clothbw_modifier_data->simulator_object = &simulator;
-  // simulator = ClothSimulatorBaraffWitkin();
+  std::cout << "freeing Cloth BW data" << std::endl;
+  ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
+  if (cbw_modifier_data->simulator_object) {
+    delete reinterpret_cast<ClothSimulatorBaraffWitkin *>(cbw_modifier_data->simulator_object);
+  }
 }
 
 static bool dependsOnTime(ModifierData *UNUSED(modifier_data))
@@ -74,14 +65,13 @@ static bool dependsOnTime(ModifierData *UNUSED(modifier_data))
 static void updateDepsgraph(ModifierData *modifier_data, const ModifierUpdateDepsgraphContext *ctx)
 {
   std::cout << __func__ << std::endl;
-  ClothBWModifierData *clothbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(
-      modifier_data);
+  ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
   DEG_add_modifier_to_transform_relation(ctx->node, "ClothBW Modifier");
-  if (clothbw_modifier_data->object) {
+  if (cbw_modifier_data->object) {
     DEG_add_object_relation(
-        ctx->node, clothbw_modifier_data->object, DEG_OB_COMP_GEOMETRY, "ClothBW Modifier");
+        ctx->node, cbw_modifier_data->object, DEG_OB_COMP_GEOMETRY, "ClothBW Modifier");
     DEG_add_object_relation(
-        ctx->node, clothbw_modifier_data->object, DEG_OB_COMP_TRANSFORM, "ClothBW Modifier");
+        ctx->node, cbw_modifier_data->object, DEG_OB_COMP_TRANSFORM, "ClothBW Modifier");
   }
 }
 
@@ -105,25 +95,30 @@ static void panelRegister(ARegionType *region_type)
 
 static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *ctx, Mesh *mesh)
 {
-  ClothBWModifierData *clothbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(
-      modifier_data);
-  UNUSED_VARS(clothbw_modifier_data);
+  ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
 
-  // ClothSimulatorBaraffWitkin *simulator = reinterpret_cast<ClothSimulatorBaraffWitkin *>(
-  //     clothbw_modifier_data->simulator_object);
+  if (!cbw_modifier_data->simulator_object) {
+    cbw_modifier_data->simulator_object = new ClothSimulatorBaraffWitkin();
+  }
+
+  ClothSimulatorBaraffWitkin *simulator = reinterpret_cast<ClothSimulatorBaraffWitkin *>(
+      cbw_modifier_data->simulator_object);
 
   /* TODO: figure out how the caching system works. */
   int framenr = DEG_get_ctime(ctx->depsgraph);
 
+  /* Currently added the modifier on a frame the is not 1 results in a crash because of this. */
   if (framenr == 1) {
-    simulator.initialize(*mesh);
+    simulator->initialize(*mesh);
     return mesh;
   }
 
-  simulator.step();
+  simulator->step();
 
-  for (int i = 0; i < mesh->totvert; i++) {
-    mesh->mvert[i].co[2] += 0.1;
+  for (int i : IndexRange(mesh->totvert)) {
+    mesh->mvert[i].co[0] = simulator->vertex_positions[i][0];
+    mesh->mvert[i].co[1] = simulator->vertex_positions[i][1];
+    mesh->mvert[i].co[2] = simulator->vertex_positions[i][2];
   }
 
   return mesh;
@@ -148,9 +143,9 @@ ModifierTypeInfo modifierType_ClothBW = {
     /* modifyHair */ nullptr,
     /* modifyGeometrySet */ nullptr,
 
-    /* initData */ initData,
+    /* initData */ nullptr,
     /* requiredDataMask */ nullptr,
-    /* freeData */ nullptr,
+    /* freeData */ freeData,
     /* isDisabled */ nullptr,
     /* updateDepsgraph */ updateDepsgraph,
     /* dependsOnTime */ dependsOnTime,

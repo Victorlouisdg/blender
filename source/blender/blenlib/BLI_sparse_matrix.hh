@@ -39,6 +39,7 @@ class SparseMatrix {
 
   SparseMatrix(int n_rows)
   {
+    UNUSED_VARS(n_rows);
   }
 };
 

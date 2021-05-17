@@ -35,12 +35,12 @@ struct float2x2 {
   {
   }
 
-  friend float2x2 operator*(const float2x2 &a, const float2 &b)
-  {
-    float2x2 result;
-    // mul_m4_m4m4(result.values, a.values, b.values);
-    return result;
-  }
+  // friend float2x2 operator*(const float2x2 &a, const float2 &b)
+  // {
+  //   float2x2 result;
+  //   mul_m2_v2(result.values, a.values, &b);
+  //   return result;
+  // }
 
   friend float2x2 operator*(const float s, const float2x2 &a)
   {
@@ -56,18 +56,16 @@ struct float2x2 {
 
   float2x2 inverted() const
   {
-    float2x2 result;
-
     /* TODO: maybe move this to matrix_math.c? And check for division by zero. */
     float a = values[0][0];
     float b = values[0][1];
     float c = values[1][0];
     float d = values[1][1];
 
-    float array[2][2] = {{d, -b}, {-c, a}};
+    float result_array[2][2] = {{d, -b}, {-c, a}};
     float determinant = a * d - b * c;
 
-    return (1.0f / determinant) * float2x2(array);
+    return (1.0f / determinant) * float2x2(result_array);
   }
 };
 

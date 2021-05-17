@@ -31,6 +31,17 @@ struct float3x3 {
     return mat;
   }
 
+  static float3x3 outer(const float3 &a, const float3 &b)
+  {
+    float3x3 mat;
+    for (int i = 0; i < 3; i++) {
+      for (int j = 0; j < 3; j++) {
+        mat.values[i][j] = a[i] * b[j];
+      }
+    }
+    return mat;
+  }
+
   friend float3 operator*(const float3x3 &m, const float3 &v)
   {
     float3 result;
@@ -41,6 +52,17 @@ struct float3x3 {
   friend float3 operator*(const float3x3 &m, const float (*v)[3])
   {
     return m * float3(v);
+  }
+
+  friend float3x3 operator-(const float3x3 &a, const float3x3 &b)
+  {
+    float3x3 result;
+    for (int i = 0; i < 3; i++) {
+      for (int j = 0; j < 3; j++) {
+        result.values[i][j] = a.values[i][j] - b.values[i][j];
+      }
+    }
+    return result;
   }
 
   float3x3 inverted() const

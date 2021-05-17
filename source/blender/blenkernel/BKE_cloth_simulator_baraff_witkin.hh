@@ -17,7 +17,16 @@
 
 #include <tuple>
 
-// #include "bmesh.h"
+/* Note about variable names in the simulator: in general I've tried to give the member
+ * variables/attributes long and clear names. I deliberately read these out into local variable
+ * with much shorter (often 2 letter) names. This is because long variable names would obfuscate
+ * all the structure of the math operations.
+ *
+ * For the loop index variables in this file I've mantained this convention:
+ * i, j: index the Arrays of all vertices/triangles
+ * m, n: index the vertices of a single triangle (or 2 triangles for the bending condition)
+ * s, t: index the components (x, y, z) of a vector.
+ */
 
 using blender::Array;
 using blender::float2;
@@ -78,7 +87,7 @@ static Span<MLoopTri> get_mesh_looptris(const Mesh &mesh)
 }
 
 /* Cloth Simulator based off of the popular paper "Large steps in cloth simulation."
- * by Baraff and Witkin, hence the name. In comments below Ithis paper is referred to
+ * by Baraff and Witkin, hence the name. In comments below this paper is referred to
  * as BW98.
  *
  * Each timestep, the simulator builds a linear system of equations that's filled with
@@ -89,6 +98,10 @@ class ClothSimulatorBaraffWitkin {
  public:
   int n_vertices;
   int n_triangles;
+
+  int n_substeps;
+  float step_time; /* Currently assuming 30 fps. */
+  float substep_time;
 
   /* State */
   Array<float3> vertex_positions;
@@ -106,16 +119,15 @@ class ClothSimulatorBaraffWitkin {
    *
    * A more descriptive name for vertex_positions_uv would have been vertex_rest_positions_2D.
    */
-  Array<float2>
-      vertex_positions_uv;  // This is only needed for initialization so maybe should be removed.
+  Array<float2> vertex_positions_uv;  // Only needed for initialization so maybe should be removed.
   Array<float> vertex_masses;
   Array<float> triangle_stretch_stiffness_u;
   Array<float> triangle_stretch_stiffness_v;
   Array<float> triangle_areas_uv;
   Array<float3> edges_normals;
 
-  float density = 0.2f;            /* in kg/m^2*/
-  float standard_gravity = -9.81f; /* in m/s^2*/
+  float density = 0.2f;            /* in kg/m^2 */
+  float standard_gravity = -9.81f; /* in m/s^2 */
 
   /* Datastructures for intermediate computations. */
   SparseMatrix vertex_force_derivatives;  // <float3x3> elements
@@ -141,12 +153,15 @@ class ClothSimulatorBaraffWitkin {
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
 
-    n_vertices = mesh.totvert;
+    n_substeps = 10;
+    step_time = 1.0f / 30.0f; /* Currently assuming 30 fps. */
+    substep_time = step_time / n_substeps;
 
-    vertex_force_derivatives = SparseMatrix(n_vertices);
+    n_vertices = mesh.totvert;
 
     initialize_vertex_attributes(mesh);
     initialize_triangle_attributes(mesh);
+    vertex_force_derivatives = SparseMatrix(n_vertices);
   };
 
   void initialize_vertex_attributes(const Mesh &mesh)
@@ -156,14 +171,18 @@ class ClothSimulatorBaraffWitkin {
     vertex_forces = Array<float3>(n_vertices, float3(0.0f));
     vertex_positions_uv = Array<float2>(n_vertices);
 
-    for (const int i : IndexRange(mesh.totvert)) {
+    /* vertex_mass_matrix_inverted is only allocated here, it's values are refilled each timestep.
+     */
+    vertex_mass_matrix_inverted = Array<float3>(n_vertices);
+
+    for (const int i : IndexRange(n_vertices)) {
       MVert vertex = mesh.mvert[i];
       vertex_positions[i] = vertex.co;
     }
 
     /* TODO: rethink this UV position initialization in the context of seams/multiple cloth pieces.
      */
-    for (const int i : IndexRange(mesh.totloop)) {
+    for (const int i : IndexRange(n_triangles)) {
       const MLoop &loop = mesh.mloop[i];
       const float2 uv = mesh.mloopuv[i].uv;
       vertex_positions_uv[loop.v] = uv;
@@ -175,7 +194,9 @@ class ClothSimulatorBaraffWitkin {
     /* While technically a vertex attribute, the vertex_masses get initialized here because
      * vertex mass is set based on the area of it's adjacent triangles.
      */
-    vertex_masses = Array<float>(n_vertices, 0.0f);
+    // vertex_masses = Array<float>(n_vertices, 0.0f);
+    float fixed_vertex_mass = 1.0f / n_vertices;
+    vertex_masses = Array<float>(n_vertices, fixed_vertex_mass);
 
     Span<MLoopTri> looptris = get_mesh_looptris(mesh);
     n_triangles = looptris.size();
@@ -213,11 +234,16 @@ class ClothSimulatorBaraffWitkin {
 
       /* This particular way of initializing vertex mass is described in BW98 section 2.2.
        * Different methods could definitely be tried, when Simulation nodes comes, vertex_mass
-       * could even just be an attribute provided by the user.  */
-      float vertex_mass = density * triangle_area_uv / 3.0f;
-      vertex_masses[v0_index] += vertex_mass;
-      vertex_masses[v1_index] += vertex_mass;
-      vertex_masses[v2_index] += vertex_mass;
+       * could even just be an attribute provided by the user.
+       *
+       * I've commented this method out for now become it gave weird mass distributions. E.g. think
+       * of a plane consisting of 2 triangles, the vertices on the shared edge would have double
+       * the mass of the non-shared vertices.
+       */
+      // float vertex_mass = density * triangle_area_uv / 3.0f;
+      // vertex_masses[v0_index] += vertex_mass;
+      // vertex_masses[v1_index] += vertex_mass;
+      // vertex_masses[v2_index] += vertex_mass;
 
       float2 uv0 = vertex_positions_uv[v0_index];
       float2 uv1 = vertex_positions_uv[v1_index];
@@ -259,13 +285,12 @@ class ClothSimulatorBaraffWitkin {
 
   void step()
   {
-    std::cout << "Cloth simulation step" << std::endl;
-    reset_forces_and_derivatives();
-    calculate_forces_and_derivatives();
-
-    for (int i : IndexRange(n_vertices)) {
-      vertex_mass_matrix_inverted[i] = float3(vertex_masses[i]);
-      /* TODO later set mass of pinned vertices to zero etc. */
+    for (int substep : IndexRange(n_substeps)) {
+      UNUSED_VARS(substep);
+      reset_forces_and_derivatives();
+      calculate_forces_and_derivatives();
+      fill_inverted_mass_matrix();
+      integrate_explicit_euler();
     }
   };
 
@@ -280,9 +305,30 @@ class ClothSimulatorBaraffWitkin {
       calculate_gravity(vertex_index);
     }
 
-    for (int triangle_index : IndexRange(n_triangles)) {
-      auto [wu, wv] = calculate_w_uv(triangle_index);
-      calculate_stretch(triangle_index, wu, wv);
+    // for (int triangle_index : IndexRange(n_triangles)) {
+    //   auto [wu, wv] = calculate_w_uv(triangle_index);
+    //   calculate_stretch(triangle_index, wu, wv);
+    // }
+  }
+
+  void fill_inverted_mass_matrix()
+  {
+    for (int i : IndexRange(n_vertices)) {
+      vertex_mass_matrix_inverted[i] = float3(1.0f / vertex_masses[i]);
+      /* TODO later set mass of pinned vertices to zero etc. */
+    }
+  }
+
+  void integrate_explicit_euler()
+  {
+    /* vertex_accelerations are only needed for debugging with explicit integration. */
+    Array<float3> vertex_accelerations = Array<float3>(n_vertices);
+
+    /* TODO: look into doing these Array-based operations with std::transform() etc. */
+    for (int i : IndexRange(n_vertices)) {
+      vertex_accelerations[i] = vertex_forces[i] * vertex_mass_matrix_inverted[i];
+      vertex_velocities[i] += vertex_accelerations[i] * substep_time;
+      vertex_positions[i] += vertex_velocities[i] * substep_time;
     }
   }
 
@@ -323,21 +369,44 @@ class ClothSimulatorBaraffWitkin {
 
   void calculate_stretch(int triangle_index, float3 wu, float3 wv)
   {
-    float area_uv = triangle_areas_uv[triangle_index];
+    int i = triangle_index;
 
+    float area_uv = triangle_areas_uv[i];
     float wu_norm = wu.normalize_and_get_length();
     float wv_norm = wv.normalize_and_get_length();
 
+    /* Stretch condition: Equation (10) in BW98. */
     float Cu = area_uv * (wu_norm - 1.0);
     float Cv = area_uv * (wv_norm - 1.0);
 
-    int3 vertex_indices = triangle_vertex_indices[triangle_index];
-    float3 dwu_dx = triangle_wu_derivatives[triangle_index];
-    float3 dwv_dx = triangle_wv_derivatives[triangle_index];
+    int3 vertex_indices = triangle_vertex_indices[i];
+    float3 dwu_dx = triangle_wu_derivatives[i];
+    float3 dwv_dx = triangle_wv_derivatives[i];
 
+    float ku = triangle_stretch_stiffness_u[i];
+    float kv = triangle_stretch_stiffness_v[i];
+
+    Array<float3> dCu_dx = Array<float3>(3);
+    Array<float3> dCv_dx = Array<float3>(3);
+
+    /* Forces */
     for (int m : IndexRange(3)) {
       int vertex_index = vertex_indices[m];
+
+      dCu_dx[m] = area_uv * dwu_dx[m] * wu;
+      dCv_dx[m] = area_uv * dwv_dx[m] * wv;
+
+      float3 force_m_u = -ku * Cu * dCu_dx[m];
+      float3 force_m_v = -kv * Cv * dCv_dx[m];
+
+      vertex_forces[vertex_index] += force_m_u + force_m_v;
     }
+
+    /* Force derivatives */
+    // float3x3 I_wu_wuT = float3x3::identity() - float3x3::outer(wu, wu);
+    // float3x3 I_wv_wvT = float3x3::identity() - float3x3::outer(wv, wv);
+
+    /* TODO */
   }
 
   ClothSimulatorBaraffWitkin()
