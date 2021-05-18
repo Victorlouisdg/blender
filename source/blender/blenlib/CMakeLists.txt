@@ -426,6 +426,7 @@ if(WITH_GTESTS)
     tests/BLI_session_uuid_test.cc
     tests/BLI_set_test.cc
     tests/BLI_span_test.cc
+    tests/BLI_sparse_matrix_test.cc
     tests/BLI_stack_cxx_test.cc
     tests/BLI_stack_test.cc
     tests/BLI_string_ref_test.cc

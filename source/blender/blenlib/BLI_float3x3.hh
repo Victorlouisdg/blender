@@ -24,6 +24,17 @@ namespace blender {
 struct float3x3 {
   float values[3][3];
 
+  float3x3() = default;
+
+  float3x3(const float *matrix)
+  {
+    memcpy(values, matrix, sizeof(float) * 9);
+  }
+
+  float3x3(const float matrix[3][3]) : float3x3(static_cast<const float *>(matrix[0]))
+  {
+  }
+
   static float3x3 identity()
   {
     float3x3 mat;

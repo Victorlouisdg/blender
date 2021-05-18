@@ -33,13 +33,41 @@ namespace blender {
 class SparseMatrix {
  public:
   int n_rows;
-  Array<std::map<int, float3x3>> rows;
+  Array<std::map<int, float3x3>> *rows;
 
   SparseMatrix() = default;
 
   SparseMatrix(int n_rows)
   {
-    UNUSED_VARS(n_rows);
+    std::cout << "SparseMatrix " << std::endl;
+    this->n_rows = n_rows;
+    rows = new Array<std::map<int, float3x3>>(n_rows);
+  }
+
+  ~SparseMatrix()
+  {
+    std::cout << "~SparseMatrix " << std::endl;
+    delete rows;
+  }
+
+  void insert(int row, int col, float3x3 value)
+  {
+    (*rows)[row][col] = value;
+  }
+
+  void multiply(const Span<float3> &vector, const MutableSpan<float3> &result)
+  {
+    std::cout << n_rows << std::endl;
+    for (int i : IndexRange(n_rows)) {
+      std::cout << "i " << i << std::endl;
+      result[i] = float3(0.0f);
+      for (std::pair<int, float3x3> element : (*rows)[i]) {
+        int j = element.first;
+        std::cout << "j " << j << std::endl;
+        float3x3 value = element.second;
+        result[i] += value * vector[j];
+      }
+    }
   }
 };
 
