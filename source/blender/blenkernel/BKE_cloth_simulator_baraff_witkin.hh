@@ -153,7 +153,7 @@ class ClothSimulatorBaraffWitkin {
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
 
-    n_substeps = 10;
+    n_substeps = 100;
     step_time = 1.0f / 30.0f; /* Currently assuming 30 fps. */
     substep_time = step_time / n_substeps;
 
@@ -162,6 +162,33 @@ class ClothSimulatorBaraffWitkin {
     initialize_vertex_attributes(mesh);
     initialize_triangle_attributes(mesh);
     vertex_force_derivatives = SparseMatrix(n_vertices);
+
+    // verify_w_derivatives(); /* For debugging, should become a test. */
+  };
+
+  void verify_w_derivatives()
+  {
+    /* This method does a finite difference verification of the w_derivatives.
+        Recall that the derivative of a function is defined as: [f(x + h) - f(x)] / h
+    */
+    for (int i : IndexRange(n_triangles)) {
+
+      std::cout << std::endl << "Triangle: " << i << std::endl;
+      std::cout << "Analytic wu_derivative" << triangle_wu_derivatives[i] << std::endl;
+
+      float h = 0.00001f;
+
+      int3 vertex_indices = triangle_vertex_indices[i];
+
+      for (int m : IndexRange(3)) {    // vertex0, vertex1, vertex2
+        for (int s : IndexRange(3)) {  // x, y, z
+          auto [wu, wv] = calculate_w_uv(i);
+          vertex_positions[vertex_indices[m]][s] += h;
+          auto [wu_h, wv_h] = calculate_w_uv(i);
+          std::cout << (wu_h - wu) / h << std::endl;
+        }
+      }
+    }
   };
 
   void initialize_vertex_attributes(const Mesh &mesh)
@@ -179,22 +206,12 @@ class ClothSimulatorBaraffWitkin {
       MVert vertex = mesh.mvert[i];
       vertex_positions[i] = vertex.co;
     }
-
-    /* TODO: rethink this UV position initialization in the context of seams/multiple cloth pieces.
-     */
-    for (const int i : IndexRange(n_triangles)) {
-      const MLoop &loop = mesh.mloop[i];
-      const float2 uv = mesh.mloopuv[i].uv;
-      vertex_positions_uv[loop.v] = uv;
-    }
   }
 
   void initialize_triangle_attributes(const Mesh &mesh)
   {
-    /* While technically a vertex attribute, the vertex_masses get initialized here because
-     * vertex mass is set based on the area of it's adjacent triangles.
-     */
-    // vertex_masses = Array<float>(n_vertices, 0.0f);
+    /* TODO set vertex mass based on Voronoi area of vertex. I read this in a paper somewhere but
+     * can't find it. */
     float fixed_vertex_mass = 1.0f / n_vertices;
     vertex_masses = Array<float>(n_vertices, fixed_vertex_mass);
 
@@ -207,6 +224,17 @@ class ClothSimulatorBaraffWitkin {
     triangle_inverted_delta_u_matrices = Array<float2x2>(n_triangles);
     triangle_wu_derivatives = Array<float3>(n_triangles);
     triangle_wv_derivatives = Array<float3>(n_triangles);
+
+    float stretch_stiffness = 1000.0f;
+    triangle_stretch_stiffness_u = Array<float>(n_triangles, stretch_stiffness);
+    triangle_stretch_stiffness_v = Array<float>(n_triangles, stretch_stiffness);
+
+    /* Think about disjoint pieces of cloth and seams etc. */
+    for (const int i : IndexRange(mesh.totloop)) {
+      const MLoop &loop = mesh.mloop[i];
+      const float2 uv = mesh.mloopuv[i].uv;
+      vertex_positions_uv[loop.v] = uv * 2.0f;  // Temporary fix for the UVs being normalized
+    }
 
     for (const int looptri_index : looptris.index_range()) {
       const MLoopTri &looptri = looptris[looptri_index];
@@ -249,6 +277,12 @@ class ClothSimulatorBaraffWitkin {
       float2 uv1 = vertex_positions_uv[v1_index];
       float2 uv2 = vertex_positions_uv[v2_index];
 
+      // std::cout << std::endl
+      //           << "Triangle: " << looptri_index << " verts" << v0_index << " " << v1_index << "
+      //           "
+      //           << v2_index << std::endl;
+      // std::cout << "UVs: " << uv0 << " " << uv1 << " " << uv2 << std::endl;
+
       float u0 = uv0[0];
       float u1 = uv1[0];
       float u2 = uv2[0];
@@ -260,6 +294,12 @@ class ClothSimulatorBaraffWitkin {
       float delta_u2 = u2 - u0;
       float delta_v1 = v1 - v0;
       float delta_v2 = v2 - v0;
+
+      // std::cout << "delta u and v's" << std::endl;
+      // std::cout << delta_u1 << std::endl;
+      // std::cout << delta_u2 << std::endl;
+      // std::cout << delta_v1 << std::endl;
+      // std::cout << delta_v2 << std::endl;
 
       /* If anyone knows how to do this in one line, let me know. */
       float array[2][2] = {{delta_u1, delta_u2}, {delta_v1, delta_v2}};
@@ -289,6 +329,11 @@ class ClothSimulatorBaraffWitkin {
       UNUSED_VARS(substep);
       reset_forces_and_derivatives();
       calculate_forces_and_derivatives();
+
+      // for (int i : IndexRange(n_vertices)) {
+      //   std::cout << i << ": " << vertex_forces[i] << std::endl;
+      // }
+
       fill_inverted_mass_matrix();
       integrate_explicit_euler();
     }
@@ -305,10 +350,10 @@ class ClothSimulatorBaraffWitkin {
       calculate_gravity(vertex_index);
     }
 
-    // for (int triangle_index : IndexRange(n_triangles)) {
-    //   auto [wu, wv] = calculate_w_uv(triangle_index);
-    //   calculate_stretch(triangle_index, wu, wv);
-    // }
+    for (int triangle_index : IndexRange(n_triangles)) {
+      auto [wu, wv] = calculate_w_uv(triangle_index);
+      calculate_stretch(triangle_index, wu, wv);
+    }
   }
 
   void fill_inverted_mass_matrix()
@@ -326,6 +371,11 @@ class ClothSimulatorBaraffWitkin {
 
     /* TODO: look into doing these Array-based operations with std::transform() etc. */
     for (int i : IndexRange(n_vertices)) {
+
+      if (i == 0 || i == 1) {
+        continue;
+      }
+
       vertex_accelerations[i] = vertex_forces[i] * vertex_mass_matrix_inverted[i];
       vertex_velocities[i] += vertex_accelerations[i] * substep_time;
       vertex_positions[i] += vertex_velocities[i] * substep_time;
@@ -343,6 +393,11 @@ class ClothSimulatorBaraffWitkin {
     float3 delta_x2 = x2 - x0;
 
     float2x2 delta_u = triangle_inverted_delta_u_matrices[triangle_index];
+
+    // std::cout << delta_u.values[0][0] << std::endl;
+    // std::cout << delta_u.values[0][1] << std::endl;
+    // std::cout << delta_u.values[1][0] << std::endl;
+    // std::cout << delta_u.values[1][1] << std::endl;
 
     /* This is basically a hard coded 3x2 @ 2x2 matrix multiplication.
      * I didn't want to create a float3x2 class specifically for this.

@@ -65,6 +65,7 @@ struct float2x2 {
     float result_array[2][2] = {{d, -b}, {-c, a}};
     float determinant = a * d - b * c;
 
+    /* For Debug builds, assert that determinant is not too close to zero? */
     return (1.0f / determinant) * float2x2(result_array);
   }
 };
