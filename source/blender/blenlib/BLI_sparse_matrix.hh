@@ -57,18 +57,53 @@ class SparseMatrix {
 
   void multiply(const Span<float3> &vector, const MutableSpan<float3> &result)
   {
-    std::cout << n_rows << std::endl;
     for (int i : IndexRange(n_rows)) {
-      std::cout << "i " << i << std::endl;
       result[i] = float3(0.0f);
       for (std::pair<int, float3x3> element : (*rows)[i]) {
         int j = element.first;
-        std::cout << "j " << j << std::endl;
         float3x3 value = element.second;
         result[i] += value * vector[j];
       }
     }
   }
+};
+
+float dot(const Span<float3> a, const Span<float3> b)
+{
+  // TODO: Assert a.length == b.length
+  float result = 0.0f;
+  for (int i : a.index_range()) {
+    result += float3::dot(a[i], b[i]);
+  }
+};
+
+/* Solvers */
+void solve_filtered_pcg(const SparseMatrix &A, const Span<float3> &b, const MutableSpan<float3> &x)
+{
+
+  Array<float3> d = Array<float3>(A.n_rows);
+  Array<float3> Ad = Array<float3>(A.n_rows);
+  Array<float3> r = Array<float3>(A.n_rows);
+
+  float delta_new = dot(r, d);
+
+  // r = A * x - b;
+  // p = -r;
+
+  // while (!converged) {
+  //   float rTr = r.squared_length();
+
+  //   A.multiply(p, Ap);
+
+  //   float alpha = rTr / (p.dot(Ap));
+  //   x += alpha * p;
+  //   r += alpha * Ap;
+
+  //   float rTr_new = r.squared_length();
+  //   float beta = rTr_new / rTr;
+
+  //   p = -r + beta
+  // }
 };
 
 }  // namespace blender

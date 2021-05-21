@@ -18,10 +18,24 @@
 
 #include "BLI_float3.hh"
 #include "BLI_math_matrix.h"
+#include "BLI_index_range.hh"
 
 namespace blender {
 
 struct float3x3 {
+  /* Note on initialization: blender interprets 2D-arrays in column-major format.
+     so in the example below, {1, 2, 3} is the first column of the matrix.
+
+    float array[3][3] = {
+      {1, 2, 3},
+      {4, 5, 6},
+      {7, 8, 9},
+  };
+
+  float3x3 block = float3x3(array);
+  */
+
+
   float values[3][3];
 
   float3x3() = default;
@@ -47,7 +61,7 @@ struct float3x3 {
     float3x3 mat;
     for (int i = 0; i < 3; i++) {
       for (int j = 0; j < 3; j++) {
-        mat.values[i][j] = a[i] * b[j];
+        mat.values[j][i] = a[i] * b[j];
       }
     }
     return mat;
@@ -89,6 +103,24 @@ struct float3x3 {
     transpose_m3_m3(result.values, values);
     return result;
   }
+};
+
+std::ostream &operator<<(std::ostream &os, float3x3 const &m)
+{
+  /* Prints [[row0], [row1], [row2]]. */
+  os << "[";
+  for (int i : IndexRange(3)) {
+    os << "[";
+    for (int j : IndexRange(3)) {
+      os << m.values[j][i];
+      if (j != 2) {
+        os << ", ";
+      }
+    }
+    os << "]";
+  }
+  os << "]";
+  return os;
 };
 
 }  // namespace blender
