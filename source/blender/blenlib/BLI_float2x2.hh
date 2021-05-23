@@ -21,6 +21,8 @@
 
 namespace blender {
 
+/* IMPORTANT TODO: store values in column-major format, like the other 3x3 adn 4x4 matrices in
+ * blender. Also change all the places where a float2x2 is created. */
 struct float2x2 {
   float values[2][2];
 

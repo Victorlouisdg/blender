@@ -17,8 +17,8 @@
 #pragma once
 
 #include "BLI_float3.hh"
-#include "BLI_math_matrix.h"
 #include "BLI_index_range.hh"
+#include "BLI_math_matrix.h"
 
 namespace blender {
 
@@ -34,7 +34,6 @@ struct float3x3 {
 
   float3x3 block = float3x3(array);
   */
-
 
   float values[3][3];
 
@@ -67,6 +66,21 @@ struct float3x3 {
     return mat;
   }
 
+  friend float3x3 operator*(const float &a, const float3x3 &b)
+  {
+    float3x3 result;
+    memcpy(result.values, b.values, sizeof(float) * 9);
+    mul_m3_fl(result.values, a);
+    return result;
+  }
+
+  friend float3x3 operator*(const float3x3 &a, const float3x3 &b)
+  {
+    float3x3 result;
+    mul_m3_m3m3(result.values, a.values, b.values);
+    return result;
+  }
+
   friend float3 operator*(const float3x3 &m, const float3 &v)
   {
     float3 result;
@@ -77,6 +91,17 @@ struct float3x3 {
   friend float3 operator*(const float3x3 &m, const float (*v)[3])
   {
     return m * float3(v);
+  }
+
+  friend float3x3 operator+(const float3x3 &a, const float3x3 &b)
+  {
+    float3x3 result;
+    for (int i = 0; i < 3; i++) {
+      for (int j = 0; j < 3; j++) {
+        result.values[i][j] = a.values[i][j] + b.values[i][j];
+      }
+    }
+    return result;
   }
 
   friend float3x3 operator-(const float3x3 &a, const float3x3 &b)
@@ -102,6 +127,11 @@ struct float3x3 {
     float3x3 result;
     transpose_m3_m3(result.values, values);
     return result;
+  }
+
+  float3 diagonal() const
+  {
+    return float3(values[0][0], values[1][1], values[2][2]);
   }
 };
 

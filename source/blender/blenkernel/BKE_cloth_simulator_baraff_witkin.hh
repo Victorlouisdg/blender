@@ -34,6 +34,8 @@ using blender::float2x2;
 using blender::float3;
 using blender::float3x3;
 using blender::IndexRange;
+using blender::solve_filtered_pcg;
+using blender::solve_gauss_seidel;
 using blender::Span;
 using blender::SparseMatrix;
 
@@ -131,13 +133,15 @@ class ClothSimulatorBaraffWitkin {
 
   /* Datastructures for intermediate computations. */
   SparseMatrix vertex_force_derivatives;  // <float3x3> elements
+  SparseMatrix *vertex_force_derivatives_pointer;
+
   Array<float3> vertex_forces;
   Array<float3> triangle_normals;
   /* The inverted mass matrix is stored as an Array because it's a diagonal matrix.
    * It's components are float3 instead of float so we can use the "mass modification"
    * technique on it's components to make vertices immovable in certain directions.
    */
-  Array<float3> vertex_mass_matrix_inverted;
+  Array<float3x3> vertex_mass_matrix_inverted;
 
   /* Precomputed quantities. */
   Array<float2x2> triangle_inverted_delta_u_matrices;
@@ -153,7 +157,7 @@ class ClothSimulatorBaraffWitkin {
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
 
-    n_substeps = 100;
+    n_substeps = 1;
     step_time = 1.0f / 30.0f; /* Currently assuming 30 fps. */
     substep_time = step_time / n_substeps;
 
@@ -161,9 +165,23 @@ class ClothSimulatorBaraffWitkin {
 
     initialize_vertex_attributes(mesh);
     initialize_triangle_attributes(mesh);
-    vertex_force_derivatives = SparseMatrix(n_vertices);
+    vertex_force_derivatives_pointer = new SparseMatrix(n_vertices);
+    vertex_force_derivatives = *vertex_force_derivatives_pointer;
 
     // verify_w_derivatives(); /* For debugging, should become a test. */
+  };
+
+  void step()
+  {
+    for (int substep : IndexRange(n_substeps)) {
+      UNUSED_VARS(substep);
+      reset_forces_and_derivatives();
+      calculate_forces_and_derivatives();
+      fill_inverted_mass_matrix();
+
+      // integrate_explicit_forward_euler();
+      integrate_implicit_backward_euler_pcg();
+    }
   };
 
   void verify_w_derivatives()
@@ -200,7 +218,7 @@ class ClothSimulatorBaraffWitkin {
 
     /* vertex_mass_matrix_inverted is only allocated here, it's values are refilled each timestep.
      */
-    vertex_mass_matrix_inverted = Array<float3>(n_vertices);
+    vertex_mass_matrix_inverted = Array<float3x3>(n_vertices);
 
     for (const int i : IndexRange(n_vertices)) {
       MVert vertex = mesh.mvert[i];
@@ -277,12 +295,6 @@ class ClothSimulatorBaraffWitkin {
       float2 uv1 = vertex_positions_uv[v1_index];
       float2 uv2 = vertex_positions_uv[v2_index];
 
-      // std::cout << std::endl
-      //           << "Triangle: " << looptri_index << " verts" << v0_index << " " << v1_index << "
-      //           "
-      //           << v2_index << std::endl;
-      // std::cout << "UVs: " << uv0 << " " << uv1 << " " << uv2 << std::endl;
-
       float u0 = uv0[0];
       float u1 = uv1[0];
       float u2 = uv2[0];
@@ -294,12 +306,6 @@ class ClothSimulatorBaraffWitkin {
       float delta_u2 = u2 - u0;
       float delta_v1 = v1 - v0;
       float delta_v2 = v2 - v0;
-
-      // std::cout << "delta u and v's" << std::endl;
-      // std::cout << delta_u1 << std::endl;
-      // std::cout << delta_u2 << std::endl;
-      // std::cout << delta_v1 << std::endl;
-      // std::cout << delta_v2 << std::endl;
 
       /* If anyone knows how to do this in one line, let me know. */
       float array[2][2] = {{delta_u1, delta_u2}, {delta_v1, delta_v2}};
@@ -323,25 +329,10 @@ class ClothSimulatorBaraffWitkin {
     }
   };
 
-  void step()
-  {
-    for (int substep : IndexRange(n_substeps)) {
-      UNUSED_VARS(substep);
-      reset_forces_and_derivatives();
-      calculate_forces_and_derivatives();
-
-      // for (int i : IndexRange(n_vertices)) {
-      //   std::cout << i << ": " << vertex_forces[i] << std::endl;
-      // }
-
-      fill_inverted_mass_matrix();
-      integrate_explicit_euler();
-    }
-  };
-
   void reset_forces_and_derivatives()
   {
     vertex_forces.fill(float3(0.0f));
+    vertex_force_derivatives.clear();
   }
 
   void calculate_forces_and_derivatives()
@@ -359,12 +350,17 @@ class ClothSimulatorBaraffWitkin {
   void fill_inverted_mass_matrix()
   {
     for (int i : IndexRange(n_vertices)) {
-      vertex_mass_matrix_inverted[i] = float3(1.0f / vertex_masses[i]);
-      /* TODO later set mass of pinned vertices to zero etc. */
+      float3x3 matrix = float3x3();
+      float inverted_mass = 1.0f / vertex_masses[i];
+      matrix.values[0][0] = inverted_mass;
+      matrix.values[1][1] = inverted_mass;
+      matrix.values[2][2] = inverted_mass;
+      vertex_mass_matrix_inverted[i] = matrix;
+      /* TODO later set inverted mass of pinned vertices to zero etc. */
     }
   }
 
-  void integrate_explicit_euler()
+  void integrate_explicit_forward_euler()
   {
     /* vertex_accelerations are only needed for debugging with explicit integration. */
     Array<float3> vertex_accelerations = Array<float3>(n_vertices);
@@ -372,12 +368,60 @@ class ClothSimulatorBaraffWitkin {
     /* TODO: look into doing these Array-based operations with std::transform() etc. */
     for (int i : IndexRange(n_vertices)) {
 
+      /* Temporary pinning until I implement it properly. */
       if (i == 0 || i == 1) {
         continue;
       }
 
-      vertex_accelerations[i] = vertex_forces[i] * vertex_mass_matrix_inverted[i];
+      vertex_accelerations[i] = vertex_mass_matrix_inverted[i] * vertex_forces[i];
       vertex_velocities[i] += vertex_accelerations[i] * substep_time;
+      vertex_positions[i] += vertex_velocities[i] * substep_time;
+    }
+  }
+
+  void integrate_implicit_backward_euler_pcg()
+  {
+    float h = substep_time;
+    SparseMatrix &dfdx = vertex_force_derivatives;
+    Array<float3> &v0 = vertex_velocities;
+    Array<float3> &f0 = vertex_forces;
+    Array<float3x3> &M_inv = vertex_mass_matrix_inverted;
+
+    /* Making b */
+    Array<float3> dfdx_v0 = Array<float3>(n_vertices);
+
+    dfdx.multiply(v0, dfdx_v0);
+
+    blender::multiply_float_inplace(h, dfdx_v0);
+    blender::add(dfdx_v0, f0);
+
+    for (int i : IndexRange(n_vertices)) {
+      dfdx_v0[i] = M_inv[i] * dfdx_v0[i];
+    }
+
+    blender::multiply_float_inplace(h, dfdx_v0);
+    Array<float3> &b = dfdx_v0;
+
+    /* Making A */
+    dfdx.multiply_block_diagonal_matrix(M_inv, h * h);  // h^2 * M_inv * dfdx
+    SparseMatrix &A = dfdx;
+
+    for (int i : IndexRange(A.n_rows)) {
+      A.insert(i, i, float3x3::identity() - A.get(i, i));
+    }
+
+    /* Solving the system. */
+    Array<float3> delta_v = Array<float3>(n_vertices, float3(0.0f));
+    // solve_filtered_pcg(A, b, delta_v);
+    solve_gauss_seidel(A, b, delta_v);
+
+    for (int i : IndexRange(n_vertices)) {
+      /* Temporary pinning until I implement it properly. */
+      if (i == 0 || i == 1) {
+        continue;
+      }
+
+      vertex_velocities[i] += delta_v[i];
       vertex_positions[i] += vertex_velocities[i] * substep_time;
     }
   }
@@ -393,11 +437,6 @@ class ClothSimulatorBaraffWitkin {
     float3 delta_x2 = x2 - x0;
 
     float2x2 delta_u = triangle_inverted_delta_u_matrices[triangle_index];
-
-    // std::cout << delta_u.values[0][0] << std::endl;
-    // std::cout << delta_u.values[0][1] << std::endl;
-    // std::cout << delta_u.values[1][0] << std::endl;
-    // std::cout << delta_u.values[1][1] << std::endl;
 
     /* This is basically a hard coded 3x2 @ 2x2 matrix multiplication.
      * I didn't want to create a float3x2 class specifically for this.
@@ -458,10 +497,22 @@ class ClothSimulatorBaraffWitkin {
     }
 
     /* Force derivatives */
-    // float3x3 I_wu_wuT = float3x3::identity() - float3x3::outer(wu, wu);
-    // float3x3 I_wv_wvT = float3x3::identity() - float3x3::outer(wv, wv);
+    float3x3 I_wu_wuT = float3x3::identity() - float3x3::outer(wu, wu);
+    float3x3 I_wv_wvT = float3x3::identity() - float3x3::outer(wv, wv);
 
-    /* TODO */
+    for (int m : IndexRange(3)) {
+      for (int n : IndexRange(3)) {
+        float3x3 dCu_dx_mn = area_uv / wu_norm * dwu_dx[m] * dwu_dx[n] * I_wu_wuT;
+        float3x3 dfu_dx_mn = -ku * float3x3::outer(dCu_dx[m], dCu_dx[n]) + Cu * dCu_dx_mn;
+
+        float3x3 dCv_dx_mn = area_uv / wv_norm * dwv_dx[m] * dwv_dx[n] * I_wv_wvT;
+        float3x3 dfv_dx_mn = -kv * float3x3::outer(dCv_dx[m], dCv_dx[n]) + Cv * dCv_dx_mn;
+
+        int i = vertex_indices[m];
+        int j = vertex_indices[n];
+        vertex_force_derivatives.insert(i, j, dfu_dx_mn + dfv_dx_mn);
+      }
+    }
   }
 
   ClothSimulatorBaraffWitkin()
@@ -472,5 +523,6 @@ class ClothSimulatorBaraffWitkin {
   ~ClothSimulatorBaraffWitkin()
   {
     std::cout << "ClothSimulatorBaraffWitkin destructed" << std::endl;
+    delete vertex_force_derivatives_pointer;
   }
 };
