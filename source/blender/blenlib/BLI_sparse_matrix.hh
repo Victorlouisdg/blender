@@ -174,8 +174,8 @@ static void solve_filtered_pcg(SparseMatrix &A,
    * Note that x is allowed to be set to an initial guess for the solution of the system.
    */
 
-  Array<float3> d_temp = Array<float3>(A.n_rows);
-  Array<float3> Ad_temp = Array<float3>(A.n_rows);
+  // Array<float3> d_temp = Array<float3>(A.n_rows);
+  // Array<float3> Ad_temp = Array<float3>(A.n_rows);
 
   Array<float3> d = Array<float3>(A.n_rows);
   Array<float3> Ad = Array<float3>(A.n_rows);
@@ -216,14 +216,10 @@ static void solve_filtered_pcg(SparseMatrix &A,
       break;
     }
 
-    for (int i : IndexRange(A.n_rows)) {
-      d_temp[i] = d[i];
-    }
-
-    A.multiply(d, Ad);  // overwrite the values already in Ad
+    A.multiply(d, Ad);
     float alpha = delta_new / dot(d, Ad);
 
-    multiply_float(alpha, d, alpha_d);  // overwrite the values already in alpha_d
+    multiply_float(alpha, d, alpha_d);
     add(x, alpha_d);
 
     subtract(r, multiply_float_inplace(alpha, Ad));
@@ -241,13 +237,13 @@ static void solve_filtered_pcg(SparseMatrix &A,
 
     // std::cout << i << " " << delta_new << std::endl;
 
-    std::cout << "d_temp       d" << std::endl;
-    for (int i : IndexRange(A.n_rows)) {
-      std::cout << d_temp[i] << "         " << d[i] << std::endl;
-    }
+    // std::cout << "d_temp       d" << std::endl;
+    // for (int i : IndexRange(A.n_rows)) {
+    //   std::cout << d_temp[i] << "         " << d[i] << std::endl;
+    // }
 
-    A.multiply(d_temp, Ad_temp);
-    std::cout << "conjugacy: " << dot(d, Ad_temp) << std::endl;
+    // A.multiply(d_temp, Ad_temp);
+    // std::cout << "conjugacy: " << dot(d, Ad_temp) << std::endl;
   }
 };
 

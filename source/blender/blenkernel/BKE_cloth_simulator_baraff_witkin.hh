@@ -5,6 +5,8 @@
 #include "BLI_float2x2.hh"
 #include "BLI_float3.hh"
 #include "BLI_float3x3.hh"
+#include "BLI_int3.hh"
+#include "BLI_int4.hh"
 #include "BLI_sparse_matrix.hh"
 
 #include "BLI_index_range.hh"
@@ -34,50 +36,14 @@ using blender::float2x2;
 using blender::float3;
 using blender::float3x3;
 using blender::IndexRange;
+using blender::int3;
+using blender::int4;
 using blender::solve_filtered_pcg;
 using blender::solve_gauss_seidel;
 using blender::Span;
 using blender::SparseMatrix;
 
 /* Utilities */
-
-struct int3 {
-  int i, j, k;
-
-  int3() = default;
-
-  int3(const int *ptr) : i{ptr[0]}, j{ptr[1]}, k{ptr[2]}
-  {
-  }
-
-  int3(int i, int j, int k) : i{i}, j{j}, k{k}
-  {
-  }
-
-  operator int *()
-  {
-    return &i;
-  }
-};
-
-struct int4 {
-  int i, j, k, l;
-
-  int4() = default;
-
-  int4(const int *ptr) : i{ptr[0]}, j{ptr[1]}, k{ptr[2]}, l{ptr[3]}
-  {
-  }
-
-  int4(int i, int j, int k, int l) : i{i}, j{j}, k{k}, l{l}
-  {
-  }
-
-  operator int *()
-  {
-    return &i;
-  }
-};
 
 /* Copied from point_distirbute. */
 static Span<MLoopTri> get_mesh_looptris(const Mesh &mesh)
@@ -356,7 +322,12 @@ class ClothSimulatorBaraffWitkin {
       matrix.values[1][1] = inverted_mass;
       matrix.values[2][2] = inverted_mass;
       vertex_mass_matrix_inverted[i] = matrix;
-      /* TODO later set inverted mass of pinned vertices to zero etc. */
+
+      /* Temporary hardcoded pin of vertices 0 and 1. Later pinning should be governed by an
+       * attribute. */
+      if (i == 0 || i == 1) {
+        vertex_mass_matrix_inverted[i] = float3x3(0.0f);
+      }
     }
   }
 
@@ -367,12 +338,6 @@ class ClothSimulatorBaraffWitkin {
 
     /* TODO: look into doing these Array-based operations with std::transform() etc. */
     for (int i : IndexRange(n_vertices)) {
-
-      /* Temporary pinning until I implement it properly. */
-      if (i == 0 || i == 1) {
-        continue;
-      }
-
       vertex_accelerations[i] = vertex_mass_matrix_inverted[i] * vertex_forces[i];
       vertex_velocities[i] += vertex_accelerations[i] * substep_time;
       vertex_positions[i] += vertex_velocities[i] * substep_time;
@@ -381,6 +346,8 @@ class ClothSimulatorBaraffWitkin {
 
   void integrate_implicit_backward_euler_pcg()
   {
+
+    /* Assemble linear system */
     float h = substep_time;
     SparseMatrix &dfdx = vertex_force_derivatives;
     Array<float3> &v0 = vertex_velocities;
@@ -412,15 +379,10 @@ class ClothSimulatorBaraffWitkin {
 
     /* Solving the system. */
     Array<float3> delta_v = Array<float3>(n_vertices, float3(0.0f));
-    // solve_filtered_pcg(A, b, delta_v);
-    solve_gauss_seidel(A, b, delta_v);
+    solve_filtered_pcg(A, b, delta_v);
+    // solve_gauss_seidel(A, b, delta_v);
 
     for (int i : IndexRange(n_vertices)) {
-      /* Temporary pinning until I implement it properly. */
-      if (i == 0 || i == 1) {
-        continue;
-      }
-
       vertex_velocities[i] += delta_v[i];
       vertex_positions[i] += vertex_velocities[i] * substep_time;
     }

@@ -39,6 +39,15 @@ struct float3x3 {
 
   float3x3() = default;
 
+  float3x3(const float value)
+  {
+    for (int i : IndexRange(3)) {
+      for (int j : IndexRange(3)) {
+        values[i][j] = value;
+      }
+    }
+  }
+
   float3x3(const float *matrix)
   {
     memcpy(values, matrix, sizeof(float) * 9);
@@ -60,7 +69,7 @@ struct float3x3 {
     float3x3 mat;
     for (int i = 0; i < 3; i++) {
       for (int j = 0; j < 3; j++) {
-        mat.values[j][i] = a[i] * b[j];
+        mat.values[i][j] = a[i] * b[j];
       }
     }
     return mat;

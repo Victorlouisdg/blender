@@ -207,6 +207,8 @@ set(SRC
   BLI_index_mask.hh
   BLI_index_range.hh
   BLI_inplace_priority_queue.hh
+  BLI_int3.hh
+  BLI_int4.hh
   BLI_iterator.h
   BLI_jitter_2d.h
   BLI_kdopbvh.h

@@ -93,7 +93,7 @@ TEST(sparse_matrix, DistrubutiveProperty)
   }
 }
 
-TEST(sparse_matrix, SolveSystem)
+TEST(sparse_matrix, SolveGaussSeidelSimple3x3)
 {
   /* Simple 3x3 system. */
   SparseMatrix A = SparseMatrix(1);
@@ -107,6 +107,22 @@ TEST(sparse_matrix, SolveSystem)
   EXPECT_FLOAT_EQ(x[0].x, 1.0f);
   EXPECT_FLOAT_EQ(x[0].y, 2.0f);
   EXPECT_FLOAT_EQ(x[0].z, 3.0f);
+}
+
+TEST(sparse_matrix, SolvePCGSimple3x3)
+{
+  /* Simple definite 3x3 system. */
+  SparseMatrix A = SparseMatrix(1);
+  float array[3][3] = {{2, -1, 0}, {-1, 2, -1}, {0, -1, 2}};
+  A.insert(0, 0, float3x3(array));
+  Array<float3> b = Array<float3>(1, float3(1, 1, 1));
+  Array<float3> x = Array<float3>(1, float3(0.0f));
+
+  solve_filtered_pcg(A, b, x);
+
+  EXPECT_FLOAT_EQ(x[0].x, 1.5f);
+  EXPECT_FLOAT_EQ(x[0].y, 2.0f);
+  EXPECT_FLOAT_EQ(x[0].z, 1.5f);
 }
 
 }  // namespace blender::tests
