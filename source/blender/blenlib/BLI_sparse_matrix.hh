@@ -57,6 +57,11 @@ class SparseMatrix {
     rows[row][col] = value;
   }
 
+  void add(int row, int col, float3x3 value)
+  {
+    rows[row][col] = value + rows[row][col];
+  }
+
   float3x3 get(int row, int col)
   {
     return rows[row][col];
@@ -74,9 +79,21 @@ class SparseMatrix {
     }
   }
 
+  void multiply_float(const float f)
+  {
+    for (int i : IndexRange(n_rows)) {
+      for (std::pair<int, float3x3> element : rows[i]) {
+        int j = element.first;
+        float3x3 value = element.second;
+        rows[i][j] = f * value;
+      }
+    }
+  }
+
   void multiply_block_diagonal_matrix(const Span<float3x3> &diagonal, const float f)
   {
-    /* For each row of A: multiply each element in the row with the diagonal matrix' diagonal block on that row. */
+    /* For each row of A: multiply each element in the row with the diagonal matrix' diagonal block
+     * on that row. */
     for (int i : IndexRange(n_rows)) {
       for (std::pair<int, float3x3> element : rows[i]) {
         int j = element.first;
@@ -176,13 +193,18 @@ static void apply_jacobi_preconditioning(SparseMatrix &A,
   }
 }
 
+static void filter(const Span<float3x3> &S, const MutableSpan<float3> &a)
+{
+  for (int i : S.index_range()) {
+    a[i] = S[i] * a[i];
+  }
+}
+
 /* Solvers */
 
 /* TODO maybe make this into a PCG class that has member variables for the intermediate
  * calculations e.g. for d, Ad, r. */
-static void solve_filtered_pcg(SparseMatrix &A,
-                               const Span<float3> &b,
-                               const MutableSpan<float3> &x)
+static void solve_pcg(SparseMatrix &A, const Span<float3> &b, const MutableSpan<float3> &x)
 {
   /* Filtered Preconditioned Conjugate Gradient solver for a system of linear equations.
    * This implementation is partially based off of "Large Steps in Cloth Simultion" by Baraff &
@@ -272,6 +294,87 @@ static void solve_filtered_pcg(SparseMatrix &A,
   float3 sum = float3(0.0f);
   A.multiply(x, r);
   subtract_from(r, b);
+  for (int i : IndexRange(A.n_rows)) {
+    sum += r[i];
+  }
+  std::cout << "(PCG) Sum of r = " << sum << std::endl;
+};
+
+/* TODO maybe make this into a PCG class that has member variables for the intermediate
+ * calculations e.g. for d, Ad, r. */
+static void solve_pcg_filtered(SparseMatrix &A,
+                               const Span<float3> &b,
+                               const MutableSpan<float3> &x)
+{
+  /* Filtered Preconditioned Conjugate Gradient solver for a system of linear equations.
+   * This implementation is partially based off of "Large Steps in Cloth Simultion" by Baraff &
+   * Witkin (BW98). BW98 added the filtering procedure, which is used to enforce cloth-object
+   * collision constraint exactly. For the rest of the PCG solver they used the algorithm described
+   * in "An Introduction to the Conjugate Gradient Method Without the Agonizing Pain" by Shewchuk.
+   * A large part of the paper builds up intuition, the PCG algorithm is presented in its entirety
+   * on page 51.
+   *
+   * The parameters of this function represent the linear system:
+   * A @ x = b
+   * Note that x is allowed to be set to an initial guess for the solution of the system.
+   */
+
+  Array<float3> d = Array<float3>(A.n_rows);
+  Array<float3> Ad = Array<float3>(A.n_rows);
+  Array<float3> alpha_d = Array<float3>(A.n_rows);
+  Array<float3> beta_d = Array<float3>(A.n_rows);
+  Array<float3> r = Array<float3>(A.n_rows);
+  Array<float3x3> S = Array<float3x3>(A.n_rows, float3x3::identity());
+
+  // This fully constrains the particles
+  S[0] = float3x3(0.0f);
+  S[1] = float3x3(0.0f);
+
+  Array<float3> z = Array<float3>(A.n_rows, float3(0.0f));
+
+  /* r = b - Ax */
+  A.multiply(x, r);     // r = Ax
+  subtract_from(r, b);  // r = b - Ax
+  filter(S, r);
+  /* d = r */
+  for (int i : IndexRange(A.n_rows)) {
+    d[i] = r[i];
+  }
+
+  float delta_old;
+  float delta_new = dot(r, d);  // delta_new = rTr
+  float delta_0 = delta_new;
+
+  /* Arbitrarily chosen tolerance. */
+  float tolerance = 0.00001f;
+
+  for (int i : IndexRange(100)) {
+    UNUSED_VARS(i);
+
+    /* Early stopping when error has decreased enough. */
+    if (delta_new < tolerance) {
+      std::cout << "Early stop " << i << std::endl;
+      break;
+    }
+
+    A.multiply(d, Ad);  // q
+    filter(S, Ad);
+    float alpha = delta_new / dot(d, Ad);
+    multiply_float(alpha, d, alpha_d);
+    add(x, alpha_d);
+    subtract(r, multiply_float_inplace(alpha, Ad));
+    delta_old = delta_new;
+    delta_new = dot(r, r);
+    float beta = delta_new / delta_old;
+    multiply_float_inplace(beta, d);  // d = beta * d
+    add(d, r);                        // d = r + beta * d
+    filter(S, d);
+  }
+
+  float3 sum = float3(0.0f);
+  A.multiply(x, r);
+  subtract_from(r, b);
+  filter(S, r);
   for (int i : IndexRange(A.n_rows)) {
     sum += r[i];
   }

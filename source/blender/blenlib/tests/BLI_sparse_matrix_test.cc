@@ -118,7 +118,7 @@ TEST(sparse_matrix, SolvePCGSimple3x3)
   Array<float3> b = Array<float3>(1, float3(1.0f));
   Array<float3> x = Array<float3>(1, float3(0.0f));
 
-  solve_filtered_pcg(A, b, x);
+  solve_pcg_filtered(A, b, x);
 
   EXPECT_FLOAT_EQ(x[0].x, 1.5f);
   EXPECT_FLOAT_EQ(x[0].y, 2.0f);
@@ -156,7 +156,7 @@ TEST(sparse_matrix, SolvePCGRandomMatrix)
   Array<float3> x_pcg = Array<float3>(n, float3(0.0f));
   Array<float3> x_gauss_seidel = Array<float3>(n, float3(0.0f));
 
-  solve_filtered_pcg(A, b, x_pcg);
+  solve_pcg_filtered(A, b, x_pcg);
   solve_gauss_seidel(A, b, x_gauss_seidel);
 
   for (int i : IndexRange(n)) {

@@ -38,8 +38,8 @@ using blender::float3x3;
 using blender::IndexRange;
 using blender::int3;
 using blender::int4;
-using blender::solve_filtered_pcg;
 using blender::solve_gauss_seidel;
+using blender::solve_pcg_filtered;
 using blender::Span;
 using blender::SparseMatrix;
 
@@ -123,7 +123,7 @@ class ClothSimulatorBaraffWitkin {
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
 
-    n_substeps = 3;
+    n_substeps = 10;
     step_time = 1.0f / 30.0f; /* Currently assuming 30 fps. */
     substep_time = step_time / n_substeps;
 
@@ -146,7 +146,8 @@ class ClothSimulatorBaraffWitkin {
       fill_inverted_mass_matrix();
 
       // integrate_explicit_forward_euler();
-      integrate_implicit_backward_euler_pcg();
+      // integrate_implicit_backward_euler_pcg();
+      integrate_implicit_backward_euler_pcg_filtered();
     }
   };
 
@@ -308,8 +309,14 @@ class ClothSimulatorBaraffWitkin {
     }
 
     for (int triangle_index : IndexRange(n_triangles)) {
+
+      // int i = triangle_index;
+      // int3 vertex_indices = triangle_vertex_indices[i];
+
       auto [wu, wv] = calculate_w_uv(triangle_index);
       calculate_stretch(triangle_index, wu, wv);
+
+      // std::cout << vertex_force_derivatives.get(vertex_indices[0], vertex_indices[1]]);
     }
   }
 
@@ -381,10 +388,50 @@ class ClothSimulatorBaraffWitkin {
 
     /* Solving the system. */
     Array<float3> delta_v = Array<float3>(n_vertices, float3(0.0f));
-    solve_filtered_pcg(A, b, delta_v);
+    solve_pcg(A, b, delta_v);
 
     std::cout << "A symmetric: " << A.is_symmetric() << std::endl;
     // solve_gauss_seidel(A, b, delta_v);
+
+    for (int i : IndexRange(n_vertices)) {
+      vertex_velocities[i] += delta_v[i];
+      vertex_positions[i] += vertex_velocities[i] * substep_time;
+    }
+  }
+
+  void integrate_implicit_backward_euler_pcg_filtered()
+  {
+    /* Assemble linear system */
+    float h = substep_time;
+    SparseMatrix &dfdx = vertex_force_derivatives;
+    Array<float3> &v0 = vertex_velocities;
+    Array<float3> &f0 = vertex_forces;
+
+    /* Making b */
+    Array<float3> dfdx_v0 = Array<float3>(n_vertices);
+    dfdx.multiply(v0, dfdx_v0);
+    blender::multiply_float_inplace(h, dfdx_v0);
+    blender::add(dfdx_v0, f0);
+    blender::multiply_float_inplace(h, dfdx_v0);
+    Array<float3> &b = dfdx_v0;
+
+    /* Making A */
+    SparseMatrix &A = dfdx;
+    A.multiply_float(h * h);
+    for (int i : IndexRange(A.n_rows)) {
+      float3x3 mass_matrix = float3x3(0.0f);
+      mass_matrix.values[0][0] = vertex_masses[i];
+      mass_matrix.values[1][1] = vertex_masses[i];
+      mass_matrix.values[2][2] = vertex_masses[i];
+      A.insert(i, i, mass_matrix - A.get(i, i));
+    }
+
+    /* Solving the system. */
+    Array<float3> delta_v = Array<float3>(n_vertices, float3(0.0f));
+    solve_pcg_filtered(A, b, delta_v);
+
+    std::cout << "A symmetric: " << A.is_symmetric() << std::endl;
+    std::cout << "delta_v: " << delta_v[0] << " " << delta_v[1] << std::endl;
 
     for (int i : IndexRange(n_vertices)) {
       vertex_velocities[i] += delta_v[i];
@@ -476,7 +523,7 @@ class ClothSimulatorBaraffWitkin {
 
         int i = vertex_indices[m];
         int j = vertex_indices[n];
-        vertex_force_derivatives.insert(i, j, dfu_dx_mn + dfv_dx_mn);
+        vertex_force_derivatives.add(i, j, dfu_dx_mn + dfv_dx_mn);
       }
     }
   }
