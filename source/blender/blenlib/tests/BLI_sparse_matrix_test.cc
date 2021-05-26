@@ -93,22 +93,6 @@ TEST(sparse_matrix, DistrubutiveProperty)
   }
 }
 
-TEST(sparse_matrix, SolveGaussSeidelSimple3x3)
-{
-  /* Simple 3x3 system. */
-  SparseMatrix A = SparseMatrix(1);
-  float array[3][3] = {{2, -2, 2}, {4, -3, 2}, {2, 1, -3}};
-  A.insert(0, 0, float3x3(array));
-  Array<float3> b = Array<float3>(1, float3(16, -5, -3));
-  Array<float3> x = Array<float3>(1, float3(0.0f));
-
-  solve_gauss_seidel(A, b, x);
-
-  EXPECT_FLOAT_EQ(x[0].x, 1.0f);
-  EXPECT_FLOAT_EQ(x[0].y, 2.0f);
-  EXPECT_FLOAT_EQ(x[0].z, 3.0f);
-}
-
 TEST(sparse_matrix, SolvePCGSimple3x3)
 {
   /* Simple definite 3x3 system. */
@@ -150,20 +134,11 @@ TEST(sparse_matrix, SolvePCGRandomMatrix)
     }
   }
 
-  // std::cout << "A symmertic: " << A.is_symmetric() << std::endl;
-
   Array<float3> b = Array<float3>(n, float3(1.0f));
   Array<float3> x_pcg = Array<float3>(n, float3(0.0f));
-  Array<float3> x_gauss_seidel = Array<float3>(n, float3(0.0f));
 
   solve_pcg_filtered(A, b, x_pcg);
-  solve_gauss_seidel(A, b, x_gauss_seidel);
-
-  for (int i : IndexRange(n)) {
-    for (int s : IndexRange(3)) {
-      EXPECT_FLOAT_EQ(x_pcg[i][s], x_gauss_seidel[i][s]);
-    }
-  }
+  // TODO check if sum of residual is below tolerance
 }
 
 }  // namespace blender::tests
