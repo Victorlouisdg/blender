@@ -123,7 +123,7 @@ class ClothSimulatorBaraffWitkin {
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
 
-    n_substeps = 1;
+    n_substeps = 3;
     step_time = 1.0f / 30.0f; /* Currently assuming 30 fps. */
     substep_time = step_time / n_substeps;
 
@@ -209,7 +209,7 @@ class ClothSimulatorBaraffWitkin {
     triangle_wu_derivatives = Array<float3>(n_triangles);
     triangle_wv_derivatives = Array<float3>(n_triangles);
 
-    float stretch_stiffness = 1000.0f;
+    float stretch_stiffness = 10000.0f;
     triangle_stretch_stiffness_u = Array<float>(n_triangles, stretch_stiffness);
     triangle_stretch_stiffness_v = Array<float>(n_triangles, stretch_stiffness);
 
@@ -217,7 +217,7 @@ class ClothSimulatorBaraffWitkin {
     for (const int i : IndexRange(mesh.totloop)) {
       const MLoop &loop = mesh.mloop[i];
       const float2 uv = mesh.mloopuv[i].uv;
-      vertex_positions_uv[loop.v] = uv * 2.0f;  // Temporary fix for the UVs being normalized
+      vertex_positions_uv[loop.v] = uv;  // TODO: fix UVs being normalized.
     }
 
     for (const int looptri_index : looptris.index_range()) {
@@ -354,6 +354,8 @@ class ClothSimulatorBaraffWitkin {
     Array<float3> &f0 = vertex_forces;
     Array<float3x3> &M_inv = vertex_mass_matrix_inverted;
 
+    std::cout << "dfdx symmetric: " << dfdx.is_symmetric() << std::endl;
+
     /* Making b */
     Array<float3> dfdx_v0 = Array<float3>(n_vertices);
 
@@ -380,6 +382,8 @@ class ClothSimulatorBaraffWitkin {
     /* Solving the system. */
     Array<float3> delta_v = Array<float3>(n_vertices, float3(0.0f));
     solve_filtered_pcg(A, b, delta_v);
+
+    std::cout << "A symmetric: " << A.is_symmetric() << std::endl;
     // solve_gauss_seidel(A, b, delta_v);
 
     for (int i : IndexRange(n_vertices)) {

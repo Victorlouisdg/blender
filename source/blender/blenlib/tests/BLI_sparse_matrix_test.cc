@@ -115,7 +115,7 @@ TEST(sparse_matrix, SolvePCGSimple3x3)
   SparseMatrix A = SparseMatrix(1);
   float array[3][3] = {{2, -1, 0}, {-1, 2, -1}, {0, -1, 2}};
   A.insert(0, 0, float3x3(array));
-  Array<float3> b = Array<float3>(1, float3(1, 1, 1));
+  Array<float3> b = Array<float3>(1, float3(1.0f));
   Array<float3> x = Array<float3>(1, float3(0.0f));
 
   solve_filtered_pcg(A, b, x);
@@ -123,6 +123,47 @@ TEST(sparse_matrix, SolvePCGSimple3x3)
   EXPECT_FLOAT_EQ(x[0].x, 1.5f);
   EXPECT_FLOAT_EQ(x[0].y, 2.0f);
   EXPECT_FLOAT_EQ(x[0].z, 1.5f);
+}
+
+TEST(sparse_matrix, SolvePCGRandomMatrix)
+{
+  srand(0);
+  int n = 5;
+  SparseMatrix A = SparseMatrix(n);
+  for (int i : IndexRange(n)) {
+    for (int j : IndexRange(n)) {
+
+      float3x3 matrix = float3x3();
+      for (int s : IndexRange(3)) {
+        for (int t : IndexRange(3)) {
+          matrix.values[s][t] = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+        }
+      }
+
+      if (i == j) {
+        A.insert(i, j, matrix + matrix.transposed() + float3x3::identity());
+      }
+      else {
+        A.insert(i, j, matrix);
+        A.insert(j, i, matrix.transposed());
+      }
+    }
+  }
+
+  // std::cout << "A symmertic: " << A.is_symmetric() << std::endl;
+
+  Array<float3> b = Array<float3>(n, float3(1.0f));
+  Array<float3> x_pcg = Array<float3>(n, float3(0.0f));
+  Array<float3> x_gauss_seidel = Array<float3>(n, float3(0.0f));
+
+  solve_filtered_pcg(A, b, x_pcg);
+  solve_gauss_seidel(A, b, x_gauss_seidel);
+
+  for (int i : IndexRange(n)) {
+    for (int s : IndexRange(3)) {
+      EXPECT_FLOAT_EQ(x_pcg[i][s], x_gauss_seidel[i][s]);
+    }
+  }
 }
 
 }  // namespace blender::tests

@@ -76,6 +76,7 @@ class SparseMatrix {
 
   void multiply_block_diagonal_matrix(const Span<float3x3> &diagonal, const float f)
   {
+    /* For each row of A: multiply each element in the row with the diagonal matrix' diagonal block on that row. */
     for (int i : IndexRange(n_rows)) {
       for (std::pair<int, float3x3> element : rows[i]) {
         int j = element.first;
@@ -83,6 +84,28 @@ class SparseMatrix {
         rows[i][j] = f * diagonal[i] * value;
       }
     }
+  }
+
+  bool is_symmetric()
+  {
+    for (int i : IndexRange(n_rows)) {
+      for (std::pair<int, float3x3> element : rows[i]) {
+        int j = element.first;
+        float3x3 value_ij = element.second;
+        float3x3 value_ji = get(j, i);
+
+        // std::cout << std::endl << value_ij << std::endl << value_ji << std::endl;
+
+        for (int s : IndexRange(3)) {
+          for (int t : IndexRange(3)) {
+            if (value_ij.values[s][t] != value_ji.values[t][s]) {
+              return false;
+            }
+          }
+        }
+      }
+    }
+    return true;
   }
 
   void clear()
@@ -208,7 +231,7 @@ static void solve_filtered_pcg(SparseMatrix &A,
   /* Arbitrarily chosen tolerance. */
   float tolerance = 0.00001f;
 
-  for (int i : IndexRange(10)) {
+  for (int i : IndexRange(100)) {
     UNUSED_VARS(i);
 
     /* Early stopping when error has decreased enough. */
@@ -245,6 +268,14 @@ static void solve_filtered_pcg(SparseMatrix &A,
     // A.multiply(d_temp, Ad_temp);
     // std::cout << "conjugacy: " << dot(d, Ad_temp) << std::endl;
   }
+
+  float3 sum = float3(0.0f);
+  A.multiply(x, r);
+  subtract_from(r, b);
+  for (int i : IndexRange(A.n_rows)) {
+    sum += r[i];
+  }
+  std::cout << "(PCG) Sum of r = " << sum << std::endl;
 };
 
 static void solve_gauss_seidel(SparseMatrix &A,
@@ -253,7 +284,7 @@ static void solve_gauss_seidel(SparseMatrix &A,
 {
 
   Array<float3> r = Array<float3>(A.n_rows);
-  for (int n : IndexRange(10)) {
+  for (int n : IndexRange(50)) {
 
     for (int i : IndexRange(A.n_rows)) {
       x[i] = b[i];
@@ -273,6 +304,14 @@ static void solve_gauss_seidel(SparseMatrix &A,
       x[i] = a_ii.inverted() * x[i];
     }
   }
+
+  float3 sum = float3(0.0f);
+  A.multiply(x, r);
+  subtract_from(r, b);
+  for (int i : IndexRange(A.n_rows)) {
+    sum += r[i];
+  }
+  std::cout << "(GS) Sum of r = " << sum << std::endl;
 };
 
 }  // namespace blender
