@@ -31,6 +31,7 @@
  */
 
 using blender::Array;
+using blender::ConjugateGradientSolver;
 using blender::float2;
 using blender::float2x2;
 using blender::float3;
@@ -38,7 +39,6 @@ using blender::float3x3;
 using blender::IndexRange;
 using blender::int3;
 using blender::int4;
-using blender::solve_pcg_filtered;
 using blender::Span;
 using blender::SparseMatrix;
 
@@ -70,6 +70,8 @@ class ClothSimulatorBaraffWitkin {
   float step_time; /* Currently assuming 30 fps. */
   float substep_time;
 
+  ConjugateGradientSolver solver;
+
   /* State */
   Array<float3> vertex_positions;
   Array<float3> vertex_velocities;
@@ -98,7 +100,6 @@ class ClothSimulatorBaraffWitkin {
 
   /* Datastructures for intermediate computations. */
   SparseMatrix vertex_force_derivatives;  // <float3x3> elements
-  SparseMatrix *vertex_force_derivatives_pointer;
 
   Array<float3> vertex_forces;
   Array<float3> triangle_normals;
@@ -125,8 +126,12 @@ class ClothSimulatorBaraffWitkin {
 
     initialize_vertex_attributes(mesh);
     initialize_triangle_attributes(mesh);
-    vertex_force_derivatives_pointer = new SparseMatrix(n_vertices);
-    vertex_force_derivatives = *vertex_force_derivatives_pointer;
+
+    vertex_force_derivatives = SparseMatrix(n_vertices);
+    solver = ConjugateGradientSolver(n_vertices);
+
+    solver.setConstraint(0, float3(0.0f), float3x3(0.0f));
+    solver.setConstraint(1, float3(0.0f), float3x3(0.0f));
 
     // verify_w_derivatives(); /* For debugging, should become a test. */
   };
@@ -343,8 +348,10 @@ class ClothSimulatorBaraffWitkin {
     }
 
     /* Solving the system. */
-    Array<float3> delta_v = Array<float3>(n_vertices, float3(0.0f));
-    solve_pcg_filtered(A, b, delta_v);
+    Array<float3> delta_v = Array<float3>(n_vertices);
+    // solve_pcg_filtered(A, b, delta_v);
+
+    solver.solve(A, b, delta_v);
 
     for (int i : IndexRange(n_vertices)) {
       vertex_velocities[i] += delta_v[i];
@@ -449,6 +456,5 @@ class ClothSimulatorBaraffWitkin {
   ~ClothSimulatorBaraffWitkin()
   {
     std::cout << "ClothSimulatorBaraffWitkin destructed" << std::endl;
-    delete vertex_force_derivatives_pointer;
   }
 };

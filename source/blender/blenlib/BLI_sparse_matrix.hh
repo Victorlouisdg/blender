@@ -33,7 +33,7 @@ namespace blender {
 class SparseMatrix {
  public:
   int n_rows;
-  Array<std::map<int, float3x3>> *rows_pointer;
+  // Array<std::map<int, float3x3>> *rows_pointer;
   Array<std::map<int, float3x3>> rows;
 
   SparseMatrix() = default;
@@ -42,14 +42,12 @@ class SparseMatrix {
   {
     std::cout << "SparseMatrix " << std::endl;
     this->n_rows = n_rows;
-    rows_pointer = new Array<std::map<int, float3x3>>(n_rows);
-    rows = *rows_pointer;
+    rows = Array<std::map<int, float3x3>>(n_rows);
   }
 
   ~SparseMatrix()
   {
     std::cout << "~SparseMatrix " << std::endl;
-    delete rows_pointer;
   }
 
   void insert(int row, int col, float3x3 value)
@@ -71,9 +69,9 @@ class SparseMatrix {
   {
     for (int i : IndexRange(n_rows)) {
       result[i] = float3(0.0f);
-      for (std::pair<int, float3x3> element : rows[i]) {
-        int j = element.first;
-        float3x3 value = element.second;
+      for (std::pair<int, float3x3> p : rows[i]) {
+        int j = p.first;
+        float3x3 value = p.second;
         result[i] += value * vector[j];
       }
     }
@@ -82,9 +80,9 @@ class SparseMatrix {
   void multiply_float(const float f)
   {
     for (int i : IndexRange(n_rows)) {
-      for (std::pair<int, float3x3> element : rows[i]) {
-        int j = element.first;
-        float3x3 value = element.second;
+      for (std::pair<int, float3x3> p : rows[i]) {
+        int j = p.first;
+        float3x3 value = p.second;
         rows[i][j] = f * value;
       }
     }
@@ -149,102 +147,139 @@ static MutableSpan<float3> multiply_float(float f,
   return result;
 }
 
-static void apply_jacobi_preconditioning(SparseMatrix &A,
-                                         const Span<float3> &r,
-                                         const MutableSpan<float3> &d)
+/* Simple Jacobi Preconditioner. */
+static void precondition(SparseMatrix &A, const Span<float3> &a, const MutableSpan<float3> &result)
 {
-  for (int i : r.index_range()) {
-    d[i] = float3::safe_divide(r[i], A.get(i, i).diagonal());
+  for (int i : a.index_range()) {
+    result[i] = float3::safe_divide(a[i], A.get(i, i).diagonal());
   }
 }
 
-static void filter(const Span<float3x3> &S, const MutableSpan<float3> &a)
-{
-  for (int i : S.index_range()) {
-    a[i] = S[i] * a[i];
-  }
-}
-
-/* Solvers */
-
-/* TODO maybe make this into a PCG class that has member variables for the intermediate
- * calculations e.g. for d, Ad, r. */
-static void solve_pcg_filtered(SparseMatrix &A,
-                               const Span<float3> &b,
-                               const MutableSpan<float3> &x)
-{
+class ConjugateGradientSolver {
   /* Filtered Preconditioned Conjugate Gradient solver for a system of linear equations.
-   * This implementation is partially based off of "Large Steps in Cloth Simultion" by Baraff &
-   * Witkin (BW98). BW98 added the filtering procedure, which is used to enforce cloth-object
-   * collision constraint exactly. For the rest of the PCG solver they used the algorithm described
-   * in "An Introduction to the Conjugate Gradient Method Without the Agonizing Pain" by Shewchuk.
-   * A large part of the paper builds up intuition, the PCG algorithm is presented in its entirety
-   * on page 51.
    *
-   * The parameters of this function represent the linear system:
-   * A @ x = b
-   * Note that x is allowed to be set to an initial guess for the solution of the system.
+   * This class is an almost direct implementation of the modified-pcg algorithm in
+   * "Large Steps in Cloth Simultion" by Baraff & Witkin [BW98]. BW98 added the filtering
+   * procedure, which is used to enforce cloth-object collision constraints exactly. For the rest
+   * of the PCG solver they used the algorithm described in "An Introduction to the Conjugate
+   * Gradient Method Without the Agonizing Pain" by Shewchuk.
    */
 
-  Array<float3> d = Array<float3>(A.n_rows);
-  Array<float3> Ad = Array<float3>(A.n_rows);
-  Array<float3> alpha_d = Array<float3>(A.n_rows);
-  Array<float3> beta_d = Array<float3>(A.n_rows);
-  Array<float3> r = Array<float3>(A.n_rows);
-  Array<float3x3> S = Array<float3x3>(A.n_rows, float3x3::identity());
+ public:
+  int n;
+  int max_iterations = 100;   /* If this is reached, something is probably wrong. */
+  float tolerance = 0.00001f; /* Not sure what tolerance is good enough. */
 
-  // This fully constrains the particles
-  S[0] = float3x3(0.0f);
-  S[1] = float3x3(0.0f);
+  Array<float3> r;
+  Array<float3> c;
+  Array<float3> q;
+  Array<float3> s;
+  Array<float3> alpha_c;
+  Array<float3> beta_c;
 
-  Array<float3> z = Array<float3>(A.n_rows, float3(0.0f));
+  std::map<int, float3> constraint_values;    /* Holds the zi's from the paper. */
+  std::map<int, float3x3> constraint_filters; /* Holds the Si's from the paper.*/
 
-  /* r = b - Ax */
-  A.multiply(x, r);     // r = Ax
-  subtract_from(r, b);  // r = b - Ax
-  filter(S, r);
-  /* d = r */
-  for (int i : IndexRange(A.n_rows)) {
-    d[i] = r[i];
+  ConjugateGradientSolver() = default;
+
+  ConjugateGradientSolver(int linear_system_size)
+  {
+    std::cout << "ConjugateGradientSolver " << std::endl;
+    n = linear_system_size;
+
+    r = Array<float3>(n);
+    c = Array<float3>(n);
+    q = Array<float3>(n);
+    s = Array<float3>(n);
+    alpha_c = Array<float3>(n);
+    beta_c = Array<float3>(n);
+
+    constraint_values = std::map<int, float3>();
+    constraint_filters = std::map<int, float3x3>();
   }
 
-  float delta_old;
-  float delta_new = dot(r, d);  // delta_new = rTr
-  float delta_0 = delta_new;
+  void setConstraint(int i, float3 value, float3x3 filter)
+  {
+    constraint_values[i] = value;
+    constraint_filters[i] = filter;
+  }
 
-  /* Arbitrarily chosen tolerance. */
-  float tolerance = 0.00001f;
+  void clearConstraints()
+  {
+    constraint_values.clear();
+    constraint_filters.clear();
+  }
 
-  for (int i : IndexRange(100)) {
-    UNUSED_VARS(i);
+  void filter(const MutableSpan<float3> &a)
+  {
+    for (std::pair<int, float3x3> p : constraint_filters) {
+      int i = p.first;
+      float3x3 Si = p.second;
+      a[i] = Si * a[i];
+    }
+  }
 
-    /* Early stopping when error has decreased enough. */
-    if (delta_new < tolerance) {
-      std::cout << "Early stop " << i << std::endl;
-      break;
+  void initialize_solution(const MutableSpan<float3> &x)
+  {
+    // Not sure why "x.fill(float3(0.0f));" doesn't work.
+    for (int i : x.index_range()) {
+      x[i] = float3(0.0f);
     }
 
-    A.multiply(d, Ad);  // q
-    filter(S, Ad);
-    float alpha = delta_new / dot(d, Ad);
-    multiply_float(alpha, d, alpha_d);
-    add(x, alpha_d);
-    subtract(r, multiply_float_inplace(alpha, Ad));
-    delta_old = delta_new;
-    delta_new = dot(r, r);
-    float beta = delta_new / delta_old;
-    multiply_float_inplace(beta, d);  // d = beta * d
-    add(d, r);                        // d = r + beta * d
-    filter(S, d);
+    for (std::pair<int, float3> p : constraint_values) {
+      int i = p.first;
+      float3 zi = p.second;
+      x[i] = zi;
+    }
   }
 
-  float3 sum = float3(0.0f);
-  A.multiply(x, r);
-  subtract_from(r, b);
-  filter(S, r);
-  for (int i : IndexRange(A.n_rows)) {
-    sum += r[i];
+  /* The parameters of this function represent the linear system:
+   * A @ x = b
+   *
+   * The memory for the solution x should be allocated by the caller, but this function will
+   * initialize its values.
+   */
+  void solve(SparseMatrix &A, const Span<float3> &b, const MutableSpan<float3> &x)
+  {
+    initialize_solution(x); /* delta_v = z */
+
+    A.multiply(x, r);    /* r = Ax */
+    subtract_from(r, b); /* r = b - Ax */
+    filter(r);
+
+    precondition(A, r, c); /* c = P-1 r */
+    filter(c);
+
+    float delta_new = dot(r, c);
+
+    for (int iteration : IndexRange(max_iterations)) {
+      UNUSED_VARS(iteration);
+      if (delta_new < tolerance) {
+        // std::cout << "Early stopping at " << iteration << std::endl;
+        break;
+      }
+
+      A.multiply(c, q); /* q = Ac*/
+      filter(q);
+
+      float alpha = delta_new / dot(c, q);
+
+      multiply_float(alpha, c, alpha_c);
+      add(x, alpha_c);
+
+      multiply_float_inplace(alpha, q); /* q = alpha * q */
+      subtract(r, q);
+
+      /* TODO reuse q for s to save memory */
+      precondition(A, r, s);
+      float delta_old = delta_new;
+      delta_new = dot(r, s);
+      float beta = delta_new / delta_old;
+      multiply_float_inplace(beta, c);  // c = beta * c
+      add(c, s);                        // c = s + beta * c
+      filter(c);
+    }
   }
-  std::cout << "(PCG) Sum of r = " << sum << std::endl;
 };
+
 }  // namespace blender

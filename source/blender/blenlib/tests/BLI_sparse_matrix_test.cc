@@ -93,24 +93,25 @@ TEST(sparse_matrix, DistrubutiveProperty)
   }
 }
 
-TEST(sparse_matrix, SolvePCGSimple3x3)
-{
-  /* Simple definite 3x3 system. */
-  SparseMatrix A = SparseMatrix(1);
-  float array[3][3] = {{2, -1, 0}, {-1, 2, -1}, {0, -1, 2}};
-  A.insert(0, 0, float3x3(array));
-  Array<float3> b = Array<float3>(1, float3(1.0f));
-  Array<float3> x = Array<float3>(1, float3(0.0f));
+// TEST(sparse_matrix, SolvePCGSimple3x3)
+// {
+//   /* Simple definite 3x3 system. */
+//   SparseMatrix A = SparseMatrix(1);
+//   float array[3][3] = {{2, -1, 0}, {-1, 2, -1}, {0, -1, 2}};
+//   A.insert(0, 0, float3x3(array));
+//   Array<float3> b = Array<float3>(1, float3(1.0f));
+//   Array<float3> x = Array<float3>(1, float3(0.0f));
 
-  solve_pcg_filtered(A, b, x);
+//   solve_pcg_filtered(A, b, x);
 
-  EXPECT_FLOAT_EQ(x[0].x, 1.5f);
-  EXPECT_FLOAT_EQ(x[0].y, 2.0f);
-  EXPECT_FLOAT_EQ(x[0].z, 1.5f);
-}
+//   EXPECT_FLOAT_EQ(x[0].x, 1.5f);
+//   EXPECT_FLOAT_EQ(x[0].y, 2.0f);
+//   EXPECT_FLOAT_EQ(x[0].z, 1.5f);
+// }
 
 TEST(sparse_matrix, SolvePCGRandomMatrix)
 {
+  /* Creating a random symmetric positive definite matrix. */
   srand(0);
   int n = 5;
   SparseMatrix A = SparseMatrix(n);
@@ -135,10 +136,23 @@ TEST(sparse_matrix, SolvePCGRandomMatrix)
   }
 
   Array<float3> b = Array<float3>(n, float3(1.0f));
-  Array<float3> x_pcg = Array<float3>(n, float3(0.0f));
+  Array<float3> x = Array<float3>(n, float3(0.0f));
+  Array<float3> r = Array<float3>(n);
 
-  solve_pcg_filtered(A, b, x_pcg);
-  // TODO check if sum of residual is below tolerance
+  ConjugateGradientSolver solver = ConjugateGradientSolver(n);
+  solver.max_iterations = 20;
+
+  solver.solve(A, b, x);
+
+  A.multiply(x, r);    /* r = Ax */
+  subtract_from(r, b); /* r = b - Ax */
+
+  float sum = 0.0f;
+  for (int i : IndexRange(n)) {
+    sum += r[i].length_squared();
+  }
+
+  EXPECT_TRUE(sum < 0.00001f);
 }
 
 }  // namespace blender::tests
