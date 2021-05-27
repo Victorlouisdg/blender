@@ -33,21 +33,14 @@ namespace blender {
 class SparseMatrix {
  public:
   int n_rows;
-  // Array<std::map<int, float3x3>> *rows_pointer;
   Array<std::map<int, float3x3>> rows;
 
   SparseMatrix() = default;
 
   SparseMatrix(int n_rows)
   {
-    std::cout << "SparseMatrix " << std::endl;
     this->n_rows = n_rows;
     rows = Array<std::map<int, float3x3>>(n_rows);
-  }
-
-  ~SparseMatrix()
-  {
-    std::cout << "~SparseMatrix " << std::endl;
   }
 
   void insert(int row, int col, float3x3 value)
@@ -95,6 +88,8 @@ class SparseMatrix {
     }
   }
 };
+
+/* Span-based operations that should go elsewhere. */
 
 /* These operations could probably be done through stl parallel algorithms. */
 static float dot(const Span<float3> a, const Span<float3> b)
@@ -184,7 +179,6 @@ class ConjugateGradientSolver {
 
   ConjugateGradientSolver(int linear_system_size)
   {
-    std::cout << "ConjugateGradientSolver " << std::endl;
     n = linear_system_size;
 
     r = Array<float3>(n);

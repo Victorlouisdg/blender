@@ -92,6 +92,8 @@ class ClothSimulatorBaraffWitkin {
   Array<float> vertex_masses;
   Array<float> triangle_stretch_stiffness_u;
   Array<float> triangle_stretch_stiffness_v;
+  Array<float> triangle_shear_stiffness;
+
   Array<float> triangle_areas_uv;
   Array<float3> edges_normals;
 
@@ -204,8 +206,11 @@ class ClothSimulatorBaraffWitkin {
     triangle_wv_derivatives = Array<float3>(n_triangles);
 
     float stretch_stiffness = 10000.0f;
+    float shear_stiffness = 100.0f;
+
     triangle_stretch_stiffness_u = Array<float>(n_triangles, stretch_stiffness);
     triangle_stretch_stiffness_v = Array<float>(n_triangles, stretch_stiffness);
+    triangle_shear_stiffness = Array<float>(n_triangles, shear_stiffness);
 
     /* Think about disjoint pieces of cloth and seams etc. */
     for (const int i : IndexRange(mesh.totloop)) {
@@ -304,6 +309,7 @@ class ClothSimulatorBaraffWitkin {
     for (int triangle_index : IndexRange(n_triangles)) {
       auto [wu, wv] = calculate_w_uv(triangle_index);
       calculate_stretch(triangle_index, wu, wv);
+      calculate_shear(triangle_index, wu, wv);
     }
   }
 
@@ -448,13 +454,42 @@ class ClothSimulatorBaraffWitkin {
     }
   }
 
-  ClothSimulatorBaraffWitkin()
+  void calculate_shear(int triangle_index, float3 wu, float3 wv)
   {
-    std::cout << "ClothSimulatorBaraffWitkin constructed" << std::endl;
-  }
+    int i = triangle_index;
+    float area_uv = triangle_areas_uv[i];
 
-  ~ClothSimulatorBaraffWitkin()
-  {
-    std::cout << "ClothSimulatorBaraffWitkin destructed" << std::endl;
+    /* Stretch condition: section 4.3 in [BW98]. */
+    float C = area_uv * float3::dot(wu, wv);
+
+    int3 vertex_indices = triangle_vertex_indices[i];
+    float3 dwu_dx = triangle_wu_derivatives[i];
+    float3 dwv_dx = triangle_wv_derivatives[i];
+
+    float k = triangle_shear_stiffness[i];
+
+    Array<float3> dC_dx = Array<float3>(3);
+
+    /* Forces */
+    for (int m : IndexRange(3)) {
+      int vertex_index = vertex_indices[m];
+
+      dC_dx[m] = area_uv * (dwu_dx[m] * wv + dwv_dx[m] * wu);
+      float3 force_m = -k * C * dC_dx[m];
+      vertex_forces[vertex_index] += force_m;
+    }
+
+    /* Force derivatives */
+    for (int m : IndexRange(3)) {
+      for (int n : IndexRange(3)) {
+        float3x3 dC_dx_mn = area_uv * (dwu_dx[m] * dwv_dx[n] + dwu_dx[n] * dwv_dx[m]) *
+                            float3x3::identity();
+        float3x3 df_dx_mn = -k * (float3x3::outer(dC_dx[m], dC_dx[n]) + C * dC_dx_mn);
+
+        int i = vertex_indices[m];
+        int j = vertex_indices[n];
+        vertex_force_derivatives.add(i, j, df_dx_mn);
+      }
+    }
   }
 };
