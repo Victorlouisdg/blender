@@ -23,10 +23,12 @@
 #include "BKE_mesh.h"
 #include "BKE_mesh_runtime.h"
 #include "BKE_modifier.h"
+#include "BKE_object.h"
 #include "BKE_pointcache.h"
 
 #include "MOD_modifiertypes.h"
 #include "MOD_ui_common.h"
+#include "MOD_util.h"
 
 #include "DNA_mesh_types.h"
 #include "DNA_meshdata_types.h"
@@ -67,11 +69,11 @@ static void updateDepsgraph(ModifierData *modifier_data, const ModifierUpdateDep
   std::cout << __func__ << std::endl;
   ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
   DEG_add_modifier_to_transform_relation(ctx->node, "ClothBW Modifier");
-  if (cbw_modifier_data->object) {
+  if (cbw_modifier_data->collision_object) {
     DEG_add_object_relation(
-        ctx->node, cbw_modifier_data->object, DEG_OB_COMP_GEOMETRY, "ClothBW Modifier");
+        ctx->node, cbw_modifier_data->collision_object, DEG_OB_COMP_GEOMETRY, "ClothBW Modifier");
     DEG_add_object_relation(
-        ctx->node, cbw_modifier_data->object, DEG_OB_COMP_TRANSFORM, "ClothBW Modifier");
+        ctx->node, cbw_modifier_data->collision_object, DEG_OB_COMP_TRANSFORM, "ClothBW Modifier");
   }
 }
 
@@ -82,7 +84,7 @@ static void panel_draw(const bContext *UNUSED(C), Panel *panel)
   uiLayoutSetPropSep(layout, true);
   {
     uiLayout *col = uiLayoutColumn(layout, false);
-    uiItemR(col, ptr, "object", 0, nullptr, ICON_NONE);
+    uiItemR(col, ptr, "collision_object", 0, nullptr, ICON_NONE);
   }
   modifier_panel_end(layout, ptr);
 }
@@ -110,6 +112,12 @@ static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *
   /* Currently added the modifier on a frame the is not 1 results in a crash because of this. */
   if (framenr == 1) {
     simulator->initialize(*mesh);
+
+    Object *collision_object = cbw_modifier_data->collision_object;
+    if (collision_object) {
+      Mesh *collision_mesh = BKE_object_get_pre_modified_mesh(collision_object);
+      simulator->set_collision_mesh(*collision_mesh);
+    }
     return mesh;
   }
 

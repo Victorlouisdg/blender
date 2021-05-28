@@ -111,6 +111,16 @@ class ClothSimulatorBaraffWitkin {
   Array<float3> triangle_wu_derivatives;
   Array<float3> triangle_wv_derivatives;
 
+  /* Kinematic Collision stuff */
+  bool kinematic_collisions_enabled = false;
+  int n_collision_vertices;
+  int n_collision_triangles;
+
+  Array<int3> collision_triangle_vertex_indices;
+  Array<float3> collision_vertex_positions;
+  Array<float3> collision_triangle_normals;
+  Array<float3> collision_edge_normals;
+
   /* Currently the simulator has its own local copy of all the necessary
    * mesh attributes e.g. vertex positions. This was easier to implement and I believe could make
    * the simulator faster due to better data locality. I'll make setters() for certain attributes
@@ -138,11 +148,86 @@ class ClothSimulatorBaraffWitkin {
     // verify_w_derivatives(); /* For debugging, should become a test. */
   };
 
+  void set_collision_mesh(const Mesh &collision_mesh)
+  {
+    kinematic_collisions_enabled = true;
+    n_collision_vertices = collision_mesh.totvert;
+
+    collision_vertex_positions = Array<float3>(n_collision_vertices);
+
+    for (const int i : IndexRange(n_collision_vertices)) {
+      MVert vertex = collision_mesh.mvert[i];
+      collision_vertex_positions[i] = vertex.co;
+    }
+
+    /* Triangle attributes */
+    Span<MLoopTri> looptris = get_mesh_looptris(collision_mesh);
+    n_collision_triangles = looptris.size();
+
+    int n_collision_edges = collision_mesh.totedge;
+
+    collision_triangle_vertex_indices = Array<int3>(n_collision_triangles);
+    collision_triangle_normals = Array<float3>(n_collision_triangles);
+    collision_edge_normals = Array<float3>(n_collision_edges, float3(0.0f));
+
+    /* Maybe turn this into a class LoopTriEdge that overwrite the hash() function? */
+    /* Currently storing looptri edges as a stored pair of vertex indices. */
+    std::map<std::pair<int, int>, float3> looptri_edge_normals =
+        std::map<std::pair<int, int>, float3>();
+
+    for (const int looptri_index : looptris.index_range()) {
+      const MLoopTri &looptri = looptris[looptri_index];
+      const int v0_loop_index = looptri.tri[0];
+      const int v1_loop_index = looptri.tri[1];
+      const int v2_loop_index = looptri.tri[2];
+      const MLoop v0_loop = collision_mesh.mloop[v0_loop_index];
+      const MLoop v1_loop = collision_mesh.mloop[v1_loop_index];
+      const MLoop v2_loop = collision_mesh.mloop[v2_loop_index];
+      const int v0_index = v0_loop.v;
+      const int v1_index = v1_loop.v;
+      const int v2_index = v2_loop.v;
+      const int e0_index = v0_loop.e;
+      const int e1_index = v1_loop.e;
+      const int e2_index = v2_loop.e;
+      const float3 v0_pos = collision_vertex_positions[v0_index];
+      const float3 v1_pos = collision_vertex_positions[v1_index];
+      const float3 v2_pos = collision_vertex_positions[v2_index];
+
+      triangle_vertex_indices[looptri_index] = {v0_index, v1_index, v2_index};
+
+      float3 normal = float3::cross(v1_pos - v0_pos, v2_pos - v0_pos).normalized();
+
+      collision_triangle_normals[looptri_index] = normal;
+
+      looptri_edge_normals[std::minmax(v0_index, v1_index)] += normal;
+      looptri_edge_normals[std::minmax(v0_index, v2_index)] += normal;
+      looptri_edge_normals[std::minmax(v1_index, v2_index)] += normal;
+
+      collision_edge_normals[e0_index] += normal;
+      collision_edge_normals[e1_index] += normal;
+      collision_edge_normals[e2_index] += normal;
+    }
+
+    std::cout << "edge normals" << std::endl;
+    for (int i : IndexRange(collision_mesh.totedge)) {
+      std::cout << collision_edge_normals[i] << std::endl;
+    }
+
+    std::cout << "looptri edge normals" << std::endl;
+    for (std::pair<std::pair<int, int>, float3> p : looptri_edge_normals) {
+      std::cout << p.first.first << ", " << p.first.second << ": " << p.second << std::endl;
+    }
+
+    std::cout << "Collision mesh set." << std::endl;
+  }
+
   void step()
   {
     for (int substep : IndexRange(n_substeps)) {
       UNUSED_VARS(substep);
       reset_forces_and_derivatives();
+
+      calculate_kinematic_collisions();
       calculate_forces_and_derivatives();
 
       // integrate_explicit_forward_euler();
@@ -491,5 +576,9 @@ class ClothSimulatorBaraffWitkin {
         vertex_force_derivatives.add(i, j, df_dx_mn);
       }
     }
+  }
+
+  void calculate_kinematic_collisions()
+  {
   }
 };

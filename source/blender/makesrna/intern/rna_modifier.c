@@ -7231,8 +7231,8 @@ static void rna_def_modifier_clothbw(BlenderRNA *brna)
   RNA_def_struct_sdna(srna, "ClothBWModifierData");
   RNA_def_struct_ui_icon(srna, ICON_MOD_CLOTH);
 
-  prop = RNA_def_property(srna, "object", PROP_POINTER, PROP_NONE);
-  RNA_def_property_ui_text(prop, "Object", "Object");
+  prop = RNA_def_property(srna, "collision_object", PROP_POINTER, PROP_NONE);
+  RNA_def_property_ui_text(prop, "Collision Object", "Collision Object");
   RNA_def_property_flag(prop, PROP_EDITABLE | PROP_ID_SELF_CHECK);
   RNA_def_property_update(prop, 0, "rna_Modifier_dependency_update");
 
