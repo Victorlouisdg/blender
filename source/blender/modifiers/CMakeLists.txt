@@ -28,6 +28,7 @@ set(INC
   ../blentranslation
   ../bmesh
   ../depsgraph
+  ../draw/intern
   ../editors/include
   ../functions
   ../makesdna
@@ -130,6 +131,7 @@ set(SRC
 set(LIB
   bf_blenkernel
   bf_blenlib
+  bf_draw
 )
 
 if(WITH_ALEMBIC)

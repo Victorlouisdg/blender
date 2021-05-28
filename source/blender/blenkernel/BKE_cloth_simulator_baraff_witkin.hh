@@ -8,6 +8,7 @@
 #include "BLI_int3.hh"
 #include "BLI_int4.hh"
 #include "BLI_sparse_matrix.hh"
+#include "BLI_vector.hh"
 
 #include "BLI_index_range.hh"
 
@@ -18,6 +19,10 @@
 #include "BKE_mesh_runtime.h"
 
 #include <tuple>
+
+extern "C" {
+#include "draw_debug.h"
+}
 
 /* Note about variable names in the simulator: in general I've tried to give the member
  * variables/attributes long and clear names. I deliberately read these out into local variable
@@ -41,6 +46,7 @@ using blender::int3;
 using blender::int4;
 using blender::Span;
 using blender::SparseMatrix;
+using blender::Vector;
 
 /* Utilities */
 
@@ -121,6 +127,10 @@ class ClothSimulatorBaraffWitkin {
   Array<float3> collision_triangle_normals;
   Array<float3> collision_edge_normals;
 
+  /* Maybe turn this into a class LoopTriEdge that overwrite the hash() function? */
+  /* Currently storing looptri edges as a stored pair of vertex indices. */
+  std::map<std::pair<int, int>, float3> looptri_edge_normals;
+
   /* Currently the simulator has its own local copy of all the necessary
    * mesh attributes e.g. vertex positions. This was easier to implement and I believe could make
    * the simulator faster due to better data locality. I'll make setters() for certain attributes
@@ -170,10 +180,7 @@ class ClothSimulatorBaraffWitkin {
     collision_triangle_normals = Array<float3>(n_collision_triangles);
     collision_edge_normals = Array<float3>(n_collision_edges, float3(0.0f));
 
-    /* Maybe turn this into a class LoopTriEdge that overwrite the hash() function? */
-    /* Currently storing looptri edges as a stored pair of vertex indices. */
-    std::map<std::pair<int, int>, float3> looptri_edge_normals =
-        std::map<std::pair<int, int>, float3>();
+    looptri_edge_normals = std::map<std::pair<int, int>, float3>();
 
     for (const int looptri_index : looptris.index_range()) {
       const MLoopTri &looptri = looptris[looptri_index];
@@ -186,14 +193,11 @@ class ClothSimulatorBaraffWitkin {
       const int v0_index = v0_loop.v;
       const int v1_index = v1_loop.v;
       const int v2_index = v2_loop.v;
-      const int e0_index = v0_loop.e;
-      const int e1_index = v1_loop.e;
-      const int e2_index = v2_loop.e;
       const float3 v0_pos = collision_vertex_positions[v0_index];
       const float3 v1_pos = collision_vertex_positions[v1_index];
       const float3 v2_pos = collision_vertex_positions[v2_index];
 
-      triangle_vertex_indices[looptri_index] = {v0_index, v1_index, v2_index};
+      collision_triangle_vertex_indices[looptri_index] = {v0_index, v1_index, v2_index};
 
       float3 normal = float3::cross(v1_pos - v0_pos, v2_pos - v0_pos).normalized();
 
@@ -202,15 +206,6 @@ class ClothSimulatorBaraffWitkin {
       looptri_edge_normals[std::minmax(v0_index, v1_index)] += normal;
       looptri_edge_normals[std::minmax(v0_index, v2_index)] += normal;
       looptri_edge_normals[std::minmax(v1_index, v2_index)] += normal;
-
-      collision_edge_normals[e0_index] += normal;
-      collision_edge_normals[e1_index] += normal;
-      collision_edge_normals[e2_index] += normal;
-    }
-
-    std::cout << "edge normals" << std::endl;
-    for (int i : IndexRange(collision_mesh.totedge)) {
-      std::cout << collision_edge_normals[i] << std::endl;
     }
 
     std::cout << "looptri edge normals" << std::endl;
@@ -231,7 +226,7 @@ class ClothSimulatorBaraffWitkin {
       calculate_forces_and_derivatives();
 
       // integrate_explicit_forward_euler();
-      integrate_implicit_backward_euler_pcg_filtered();
+      // integrate_implicit_backward_euler_pcg_filtered();
     }
   };
 
@@ -327,19 +322,6 @@ class ClothSimulatorBaraffWitkin {
        * by the two input vectors, the triangle area is conveniently half of this area. */
       const float triangle_area_uv = normal.length() / 2;
       triangle_areas_uv[looptri_index] = triangle_area_uv;
-
-      /* This particular way of initializing vertex mass is described in BW98 section 2.2.
-       * Different methods could definitely be tried, when Simulation nodes comes, vertex_mass
-       * could even just be an attribute provided by the user.
-       *
-       * I've commented this method out for now become it gave weird mass distributions. E.g. think
-       * of a plane consisting of 2 triangles, the vertices on the shared edge would have double
-       * the mass of the non-shared vertices.
-       */
-      // float vertex_mass = density * triangle_area_uv / 3.0f;
-      // vertex_masses[v0_index] += vertex_mass;
-      // vertex_masses[v1_index] += vertex_mass;
-      // vertex_masses[v2_index] += vertex_mass;
 
       float2 uv0 = vertex_positions_uv[v0_index];
       float2 uv1 = vertex_positions_uv[v1_index];
@@ -440,8 +422,6 @@ class ClothSimulatorBaraffWitkin {
 
     /* Solving the system. */
     Array<float3> delta_v = Array<float3>(n_vertices);
-    // solve_pcg_filtered(A, b, delta_v);
-
     solver.solve(A, b, delta_v);
 
     for (int i : IndexRange(n_vertices)) {
@@ -580,5 +560,64 @@ class ClothSimulatorBaraffWitkin {
 
   void calculate_kinematic_collisions()
   {
+    const float center[3] = {0.0f, 0.0f, 0.0f};
+    const float radius = 2.0f;
+    const float yellow[4] = {1.0f, 1.0f, 0.0f, 1.0f};
+    const float red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+
+    for (int t : IndexRange(n_collision_triangles)) {
+      int3 vertex_indices = collision_triangle_vertex_indices[t];
+
+      std::cout << vertex_indices[0] << " " << vertex_indices[1] << " " << vertex_indices[2]
+                << std::endl;
+      Vector<float3> bisector_normals = Vector<float3>();
+
+      for (int i : IndexRange(3)) {
+        for (int j : IndexRange(3)) {
+          if (i < j) {
+            int k = 3 - i - j;
+
+            float3 xi = collision_vertex_positions[vertex_indices[i]];
+            float3 xj = collision_vertex_positions[vertex_indices[j]];
+            float3 xk = collision_vertex_positions[vertex_indices[k]];
+
+            float3 edge_ij = xj - xi;
+
+            float3 edge_normal =
+                looptri_edge_normals[std::minmax(vertex_indices[i], vertex_indices[j])];
+
+            float3 bisector_normal = float3::cross(edge_normal, edge_ij);
+
+            if (float3::dot(bisector_normal, xk - (xi + xj) / 2.0f) < 0.0f) {
+              bisector_normal *= -1.0f;  // TODO make a member function "flip"?
+            }
+
+            bisector_normal.normalize();
+            bisector_normals.append(bisector_normal);
+
+            /* Drawing code. */
+            float3 edge_center = (xi + xj) / 2.0f;
+            float3 bisector_normal_end = edge_center + bisector_normal * 0.2f;
+
+            bisector_normal_end.z += 0.0001f; /* To prevent z-fighting. */
+            DRW_debug_line_v3v3(edge_center, bisector_normal_end, red);
+          }
+        }
+      }
+
+      int vi = 0;
+      for (int i : IndexRange(3)) {
+        for (int j : IndexRange(3)) {
+          if (i < j) {
+            float3 plane_intersection = float3::cross(bisector_normals[i], bisector_normals[j]);
+            float3 x = collision_vertex_positions[vertex_indices[vi]];
+
+            // std::cout <<  "i = " << i << "vi = " << vertex_indices[i] << " intersection: " << plane_intersection << std::endl;
+            DRW_debug_line_v3v3(x, x + plane_intersection, yellow);
+            vi += 1;
+          }
+        }
+      }
+    }
   }
 };
