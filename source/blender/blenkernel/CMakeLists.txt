@@ -314,6 +314,7 @@ set(SRC
   BKE_cdderivedmesh.h
   BKE_cloth.h
   BKE_cloth_simulator_baraff_witkin.hh
+  BKE_cloth_simulator_constants.hh
   BKE_collection.h
   BKE_collision.h
   BKE_colorband.h
