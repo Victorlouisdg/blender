@@ -564,17 +564,17 @@ class ClothSimulatorBaraffWitkin {
     const float radius = 2.0f;
     const float yellow[4] = {1.0f, 1.0f, 0.0f, 1.0f};
     const float red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+    const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
 
     for (int t : IndexRange(n_collision_triangles)) {
       int3 vertex_indices = collision_triangle_vertex_indices[t];
+      float3 triangle_normal = collision_triangle_normals[t];
 
-      std::cout << vertex_indices[0] << " " << vertex_indices[1] << " " << vertex_indices[2]
-                << std::endl;
-      Vector<float3> bisector_normals = Vector<float3>();
+      Vector<float3> bisector_normals = Vector<float3>(); /* (i,j), (i, k), (j, k) */
 
       for (int i : IndexRange(3)) {
         for (int j : IndexRange(3)) {
-          if (i < j) {
+          if (i < j) { /* (0,1), (0,2), (1,2) */
             int k = 3 - i - j;
 
             float3 xi = collision_vertex_positions[vertex_indices[i]];
@@ -597,27 +597,74 @@ class ClothSimulatorBaraffWitkin {
 
             /* Drawing code. */
             float3 edge_center = (xi + xj) / 2.0f;
-            float3 bisector_normal_end = edge_center + bisector_normal * 0.2f;
+            float3 bisector_normal_end = edge_center + bisector_normal * 0.1f;
 
-            bisector_normal_end.z += 0.0001f; /* To prevent z-fighting. */
+            DRW_debug_line_v3v3(edge_center, bisector_normal_end, red);
+            DRW_debug_line_v3v3(edge_center, bisector_normal_end, red);
             DRW_debug_line_v3v3(edge_center, bisector_normal_end, red);
           }
         }
       }
 
+      /* TODO: Make this more mantainable, currently it's quite difficult to wrap your head around.
+       */
+      // e normals:
+      // 0: 01
+      // 1: 02
+      // 2: 12
+
+      // place at:
+      // vertex 0: cross 01, 02
+      // vertex 1: cross 01, 12
+      // vertex 2: cross 02, 12
+
+      Vector<float3> corners = Vector<float3>();
+
+      float offset = 0.1f;
+
       int vi = 0;
       for (int i : IndexRange(3)) {
         for (int j : IndexRange(3)) {
-          if (i < j) {
+          if (i < j) { /* (0,1), (0,2), (1,2) */
+
             float3 plane_intersection = float3::cross(bisector_normals[i], bisector_normals[j]);
+            plane_intersection.normalize();
+
+            float dot = float3::dot(triangle_normal, plane_intersection);
+
+            // if (float3::dot(triangle_normal, plane_intersection) < 0.0f) {
+            //   plane_intersection *= -1.0f;
+            // }
+
             float3 x = collision_vertex_positions[vertex_indices[vi]];
 
-            // std::cout <<  "i = " << i << "vi = " << vertex_indices[i] << " intersection: " << plane_intersection << std::endl;
-            DRW_debug_line_v3v3(x, x + plane_intersection, yellow);
+            /* DynDef: Instead of scaling the direction by the inset or offset directly, we use the
+             * magnitude required to reach the inset or offset in the normal direction with
+             * respect to the face. */
+            float3 corner = x + plane_intersection / dot * offset;
+
+            corners.append(corner);
+
+            // if (t == 30 || t == 5) {
+              DRW_debug_line_v3v3(x, corner, yellow);
+            // }
+            // DRW_debug_line_v3v3(x, x + triangle_normal * 0.2f, green);
+
             vi += 1;
           }
         }
       }
+
+    //   if (t == 30 || t == 5) {
+
+        for (int i : IndexRange(3)) {
+          for (int j : IndexRange(3)) {
+            if (i < j) { /* (0,1), (0,2), (1,2) */
+              DRW_debug_line_v3v3(corners[i], corners[j], yellow);
+            }
+          }
+        }
+    //   }
     }
   }
 };
