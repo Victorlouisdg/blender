@@ -706,6 +706,7 @@ static void rna_Modifier_is_active_set(PointerRNA *ptr, bool value)
 RNA_MOD_VGROUP_NAME_SET(Armature, defgrp_name);
 RNA_MOD_VGROUP_NAME_SET(Bevel, defgrp_name);
 RNA_MOD_VGROUP_NAME_SET(Cast, defgrp_name);
+RNA_MOD_VGROUP_NAME_SET(ClothBW, defgrp_name);
 RNA_MOD_VGROUP_NAME_SET(Curve, name);
 RNA_MOD_VGROUP_NAME_SET(DataTransfer, defgrp_name);
 RNA_MOD_VGROUP_NAME_SET(Decimate, defgrp_name);
@@ -7235,6 +7236,13 @@ static void rna_def_modifier_clothbw(BlenderRNA *brna)
   RNA_def_property_ui_text(prop, "Collision Object", "Collision Object");
   RNA_def_property_flag(prop, PROP_EDITABLE | PROP_ID_SELF_CHECK);
   RNA_def_property_update(prop, 0, "rna_Modifier_dependency_update");
+
+  prop = RNA_def_property(srna, "vertex_group", PROP_STRING, PROP_NONE);
+  RNA_def_property_string_sdna(prop, NULL, "defgrp_name");
+  RNA_def_property_ui_text(
+      prop, "Pin Group", "Vertex group name for selecting immovable cloth vertices.");
+  RNA_def_property_string_funcs(prop, NULL, NULL, "rna_ClothBWModifier_defgrp_name_set");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
 
   RNA_define_lib_overridable(false);
 }

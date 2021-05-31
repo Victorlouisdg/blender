@@ -2349,6 +2349,9 @@ typedef struct ClothBWModifierData {
 
   struct Object *collision_object;
 
+  /* Name of vertex group to of the vertices to pin, MAX_VGROUP_NAME. */
+  char defgrp_name[64];
+
   void *simulator_object;
 
 } ClothBWModifierData;

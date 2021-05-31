@@ -19,6 +19,7 @@
  */
 
 #include "BKE_cloth_simulator_baraff_witkin.hh"
+#include "BKE_deform.h"
 #include "BKE_lib_query.h"
 #include "BKE_mesh.h"
 #include "BKE_mesh_runtime.h"
@@ -80,11 +81,15 @@ static void updateDepsgraph(ModifierData *modifier_data, const ModifierUpdateDep
 static void panel_draw(const bContext *UNUSED(C), Panel *panel)
 {
   uiLayout *layout = panel->layout;
-  PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
+
+  PointerRNA ob_ptr;
+  PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
+
   uiLayoutSetPropSep(layout, true);
   {
     uiLayout *col = uiLayoutColumn(layout, false);
     uiItemR(col, ptr, "collision_object", 0, nullptr, ICON_NONE);
+    modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", NULL, NULL);
   }
   modifier_panel_end(layout, ptr);
 }
@@ -119,6 +124,23 @@ static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *
       simulator->set_collision_mesh(*collision_mesh);
     }
     return mesh;
+  }
+
+  /* Ugly piece of code to set pinned vertices. */
+  const int defgrp_index = BKE_object_defgroup_name_index(ctx->object,
+                                                          cbw_modifier_data->defgrp_name);
+  if (defgrp_index != -1) {
+    MDeformVert *dvert, *dv;
+    dvert = (MDeformVert *)CustomData_get_layer(&mesh->vdata, CD_MDEFORMVERT);
+    if (dvert) {
+      dv = &dvert[0];
+      for (uint i = 0; i < mesh->totvert; i++, dv++) {
+        const bool found = BKE_defvert_find_weight(dv, defgrp_index) > 0.0f;
+        if (found) {
+          simulator->pin(i);
+        }
+      }
+    }
   }
 
   simulator->step();

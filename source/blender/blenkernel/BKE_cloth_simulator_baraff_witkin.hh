@@ -152,11 +152,13 @@ class ClothSimulatorBaraffWitkin {
     vertex_force_derivatives = SparseMatrix(n_vertices);
     solver = ConjugateGradientSolver(n_vertices);
 
-    solver.setConstraint(0, float3(0.0f), float3x3(0.0f));
-    solver.setConstraint(1, float3(0.0f), float3x3(0.0f));
-
-    // verify_w_derivatives(); /* For debugging, should become a test. */
+    // verify_w_derivatives(); /* For debugging, could become a test. */
   };
+
+  void pin(int vertex_index)
+  {
+    solver.setConstraint(vertex_index, float3(0.0f), float3x3(0.0f));
+  }
 
   void set_collision_mesh(const Mesh &collision_mesh)
   {
@@ -601,14 +603,15 @@ class ClothSimulatorBaraffWitkin {
       float distance = collision_distances[i];
 
       if (distance > offset) {
-        DRW_debug_line_v3v3(x, closest_point, green);
+        // DRW_debug_line_v3v3(x, closest_point, green);
       }
       else {
-        DRW_debug_line_v3v3(x, closest_point, red);
+        // DRW_debug_line_v3v3(x, closest_point, red);
 
         // Stick particle to surface -> fully constraint delta_v to 0
-        solver.setConstraint(
-            i, -vertex_velocities[i], float3x3(0.0f)); /* Fully constrain particle velocity to zero. */
+        solver.setConstraint(i,
+                             -vertex_velocities[i],
+                             float3x3(0.0f)); /* Fully constrain particle velocity to zero. */
       }
     }
 
