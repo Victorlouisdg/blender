@@ -226,8 +226,10 @@ class ClothSimulatorBaraffWitkin {
       calculate_forces_and_derivatives();
 
       // integrate_explicit_forward_euler();
-      // integrate_implicit_backward_euler_pcg_filtered();
+      integrate_implicit_backward_euler_pcg_filtered();
     }
+
+    // calculate_kinematic_collisions(); /* Placed here for debugging. */
   };
 
   void verify_w_derivatives()
@@ -560,111 +562,163 @@ class ClothSimulatorBaraffWitkin {
 
   void calculate_kinematic_collisions()
   {
-    const float center[3] = {0.0f, 0.0f, 0.0f};
-    const float radius = 2.0f;
-    const float yellow[4] = {1.0f, 1.0f, 0.0f, 1.0f};
-    const float red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
-    const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+    Array<float> collision_distances = Array<float>(n_vertices, FLT_MAX);
+    Array<float3> collision_closest_points = Array<float3>(n_vertices);
 
-    for (int t : IndexRange(n_collision_triangles)) {
-      int3 vertex_indices = collision_triangle_vertex_indices[t];
-      float3 triangle_normal = collision_triangle_normals[t];
+    /* For each cloth vertex find the closest point on the collision geometry. */
+    for (int i : IndexRange(n_vertices)) {
+      float3 x = vertex_positions[i];
 
-      Vector<float3> bisector_normals = Vector<float3>(); /* (i,j), (i, k), (j, k) */
+      /* Currently we search for collision by looping over all triangles, later this should be
+       * accelerated with an AABB tree or similar. */
+      for (int t : IndexRange(n_collision_triangles)) {
+        int3 vertex_indices = collision_triangle_vertex_indices[t];
 
-      for (int i : IndexRange(3)) {
-        for (int j : IndexRange(3)) {
-          if (i < j) { /* (0,1), (0,2), (1,2) */
-            int k = 3 - i - j;
+        float3 v0 = collision_vertex_positions[vertex_indices[0]];
+        float3 v1 = collision_vertex_positions[vertex_indices[1]];
+        float3 v2 = collision_vertex_positions[vertex_indices[2]];
 
-            float3 xi = collision_vertex_positions[vertex_indices[i]];
-            float3 xj = collision_vertex_positions[vertex_indices[j]];
-            float3 xk = collision_vertex_positions[vertex_indices[k]];
+        float3 closest_point = float3();
+        closest_on_tri_to_point_v3(closest_point, x, v0, v1, v2);
 
-            float3 edge_ij = xj - xi;
+        float distance = float3::distance(closest_point, x);
 
-            float3 edge_normal =
-                looptri_edge_normals[std::minmax(vertex_indices[i], vertex_indices[j])];
-
-            float3 bisector_normal = float3::cross(edge_normal, edge_ij);
-
-            if (float3::dot(bisector_normal, xk - (xi + xj) / 2.0f) < 0.0f) {
-              bisector_normal *= -1.0f;  // TODO make a member function "flip"?
-            }
-
-            bisector_normal.normalize();
-            bisector_normals.append(bisector_normal);
-
-            /* Drawing code. */
-            float3 edge_center = (xi + xj) / 2.0f;
-            float3 bisector_normal_end = edge_center + bisector_normal * 0.1f;
-
-            DRW_debug_line_v3v3(edge_center, bisector_normal_end, red);
-            DRW_debug_line_v3v3(edge_center, bisector_normal_end, red);
-            DRW_debug_line_v3v3(edge_center, bisector_normal_end, red);
-          }
+        if (distance < collision_distances[i]) {
+          collision_distances[i] = distance;
+          collision_closest_points[i] = closest_point;
         }
       }
-
-      /* TODO: Make this more mantainable, currently it's quite difficult to wrap your head around.
-       */
-      // e normals:
-      // 0: 01
-      // 1: 02
-      // 2: 12
-
-      // place at:
-      // vertex 0: cross 01, 02
-      // vertex 1: cross 01, 12
-      // vertex 2: cross 02, 12
-
-      Vector<float3> corners = Vector<float3>();
-
-      float offset = 0.1f;
-
-      int vi = 0;
-      for (int i : IndexRange(3)) {
-        for (int j : IndexRange(3)) {
-          if (i < j) { /* (0,1), (0,2), (1,2) */
-
-            float3 plane_intersection = float3::cross(bisector_normals[i], bisector_normals[j]);
-            plane_intersection.normalize();
-
-            float dot = float3::dot(triangle_normal, plane_intersection);
-
-            // if (float3::dot(triangle_normal, plane_intersection) < 0.0f) {
-            //   plane_intersection *= -1.0f;
-            // }
-
-            float3 x = collision_vertex_positions[vertex_indices[vi]];
-
-            /* DynDef: Instead of scaling the direction by the inset or offset directly, we use the
-             * magnitude required to reach the inset or offset in the normal direction with
-             * respect to the face. */
-            float3 corner = x + plane_intersection / dot * offset;
-
-            corners.append(corner);
-
-            // if (t == 30 || t == 5) {
-              DRW_debug_line_v3v3(x, corner, yellow);
-            // }
-            // DRW_debug_line_v3v3(x, x + triangle_normal * 0.2f, green);
-
-            vi += 1;
-          }
-        }
-      }
-
-    //   if (t == 30 || t == 5) {
-
-        for (int i : IndexRange(3)) {
-          for (int j : IndexRange(3)) {
-            if (i < j) { /* (0,1), (0,2), (1,2) */
-              DRW_debug_line_v3v3(corners[i], corners[j], yellow);
-            }
-          }
-        }
-    //   }
     }
+
+    const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+    const float red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+
+    float offset = 0.1f;
+
+    for (int i : IndexRange(n_vertices)) {
+      float3 x = vertex_positions[i];
+      float3 closest_point = collision_closest_points[i];
+      float distance = collision_distances[i];
+
+      if (distance > offset) {
+        DRW_debug_line_v3v3(x, closest_point, green);
+      }
+      else {
+        DRW_debug_line_v3v3(x, closest_point, red);
+
+        // Stick particle to surface -> fully constraint delta_v to 0
+        solver.setConstraint(
+            i, -vertex_velocities[i], float3x3(0.0f)); /* Fully constrain particle velocity to zero. */
+      }
+    }
+
+    // const float center[3] = {0.0f, 0.0f, 0.0f};
+    // const float radius = 2.0f;
+    // const float yellow[4] = {1.0f, 1.0f, 0.0f, 1.0f};
+    // const float red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+    // const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+
+    // for (int t : IndexRange(n_collision_triangles)) {
+    //   int3 vertex_indices = collision_triangle_vertex_indices[t];
+    //   float3 triangle_normal = collision_triangle_normals[t];
+
+    //   Vector<float3> bisector_normals = Vector<float3>(); /* (i,j), (i, k), (j, k) */
+
+    //   for (int i : IndexRange(3)) {
+    //     for (int j : IndexRange(3)) {
+    //       if (i < j) { /* (0,1), (0,2), (1,2) */
+    //         int k = 3 - i - j;
+
+    //         float3 xi = collision_vertex_positions[vertex_indices[i]];
+    //         float3 xj = collision_vertex_positions[vertex_indices[j]];
+    //         float3 xk = collision_vertex_positions[vertex_indices[k]];
+
+    //         float3 edge_ij = xj - xi;
+
+    //         float3 edge_normal =
+    //             looptri_edge_normals[std::minmax(vertex_indices[i], vertex_indices[j])];
+
+    //         float3 bisector_normal = float3::cross(edge_normal, edge_ij);
+
+    //         if (float3::dot(bisector_normal, xk - (xi + xj) / 2.0f) < 0.0f) {
+    //           bisector_normal *= -1.0f;  // TODO make a member function "flip"?
+    //         }
+
+    //         bisector_normal.normalize();
+    //         bisector_normals.append(bisector_normal);
+
+    //         /* Drawing code. */
+    //         float3 edge_center = (xi + xj) / 2.0f;
+    //         float3 bisector_normal_end = edge_center + bisector_normal * 0.1f;
+
+    //         DRW_debug_line_v3v3(edge_center, bisector_normal_end, red);
+    //         DRW_debug_line_v3v3(edge_center, bisector_normal_end, red);
+    //         DRW_debug_line_v3v3(edge_center, bisector_normal_end, red);
+    //       }
+    //     }
+    //   }
+
+    //   /* TODO: Make this more mantainable, currently it's quite difficult to wrap your head
+    //   around.
+    //    */
+    //   // e normals:
+    //   // 0: 01
+    //   // 1: 02
+    //   // 2: 12
+
+    //   // place at:
+    //   // vertex 0: cross 01, 02
+    //   // vertex 1: cross 01, 12
+    //   // vertex 2: cross 02, 12
+
+    //   Vector<float3> corners = Vector<float3>();
+
+    //   float offset = 0.1f;
+
+    //   int vi = 0;
+    //   for (int i : IndexRange(3)) {
+    //     for (int j : IndexRange(3)) {
+    //       if (i < j) { /* (0,1), (0,2), (1,2) */
+
+    //         float3 plane_intersection = float3::cross(bisector_normals[i], bisector_normals[j]);
+    //         plane_intersection.normalize();
+
+    //         float dot = float3::dot(triangle_normal, plane_intersection);
+
+    //         // if (float3::dot(triangle_normal, plane_intersection) < 0.0f) {
+    //         //   plane_intersection *= -1.0f;
+    //         // }
+
+    //         float3 x = collision_vertex_positions[vertex_indices[vi]];
+
+    //         /* DynDef: Instead of scaling the direction by the inset or offset directly, we use
+    //         the
+    //          * magnitude required to reach the inset or offset in the normal direction with
+    //          * respect to the face. */
+    //         float3 corner = x + plane_intersection / dot * offset;
+
+    //         corners.append(corner);
+
+    //         // if (t == 30 || t == 5) {
+    //         DRW_debug_line_v3v3(x, corner, yellow);
+    //         // }
+    //         // DRW_debug_line_v3v3(x, x + triangle_normal * 0.2f, green);
+
+    //         vi += 1;
+    //       }
+    //     }
+    //   }
+
+    //   //   if (t == 30 || t == 5) {
+
+    //   for (int i : IndexRange(3)) {
+    //     for (int j : IndexRange(3)) {
+    //       if (i < j) { /* (0,1), (0,2), (1,2) */
+    //         DRW_debug_line_v3v3(corners[i], corners[j], yellow);
+    //       }
+    //     }
+    //   }
+    //   //   }
+    // }
   }
 };
