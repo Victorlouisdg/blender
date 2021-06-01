@@ -64,6 +64,18 @@ struct float3x3 {
     return mat;
   }
 
+  static float3x3 diagonal(const float v)
+  {
+    float values[3][3] = {{v, 0.0f, 0.0f}, {0.0f, v, 0.0f}, {0.0f, 0.0f, v}};
+    return float3x3(values);
+  }
+
+  static float3x3 skew(const float3 v)
+  {
+    float values[3][3] = {{0.0f, v[2], -v[1]}, {-v[2], 0.0f, v[0]}, {v[1], -v[0], 0.0f}};
+    return float3x3(values);
+  }
+
   static float3x3 outer(const float3 &a, const float3 &b)
   {
     float3x3 mat;
@@ -141,6 +153,11 @@ struct float3x3 {
   float3 diagonal() const
   {
     return float3(values[0][0], values[1][1], values[2][2]);
+  }
+
+  float3 row(int row_index) const
+  {
+    return float3(values[0][row_index], values[1][row_index], values[2][row_index]);
   }
 };
 

@@ -72,6 +72,7 @@ class ClothSimulatorBaraffWitkin {
  public:
   int n_vertices;
   int n_triangles;
+  int n_bending_edges;
 
   int n_substeps;
   float step_time; /* Currently assuming 30 fps. */
@@ -100,6 +101,7 @@ class ClothSimulatorBaraffWitkin {
   Array<float> triangle_stretch_stiffness_u;
   Array<float> triangle_stretch_stiffness_v;
   Array<float> triangle_shear_stiffness;
+  Array<float> bending_stiffness;
 
   Array<float> triangle_areas_uv;
   Array<float3> edges_normals;
@@ -229,7 +231,7 @@ class ClothSimulatorBaraffWitkin {
       calculate_forces_and_derivatives();
 
       // integrate_explicit_forward_euler();
-      // integrate_implicit_backward_euler_pcg_filtered();
+      integrate_implicit_backward_euler_pcg_filtered();
     }
 
     // calculate_kinematic_collisions(); /* Placed here for debugging. */
@@ -405,6 +407,9 @@ class ClothSimulatorBaraffWitkin {
     }
 
     bending_vertex_indices = Array<int4>(bending_indices_vector.as_span());
+    n_bending_edges = bending_vertex_indices.size();
+
+    bending_stiffness = Array<float>(n_bending_edges, 0.1f);
   };
 
   void reset_forces_and_derivatives()
@@ -610,14 +615,100 @@ class ClothSimulatorBaraffWitkin {
 
   void calculate_bend(int bending_index)
   {
-    auto [v0_index, v1_index, v2_index, v3_index] = bending_vertex_indices[bending_index];
-    float3 x0 = vertex_positions[v0_index];
-    float3 x1 = vertex_positions[v1_index];
-    float3 x2 = vertex_positions[v2_index];
-    float3 x3 = vertex_positions[v3_index];
+    float k = bending_stiffness[bending_index];
+    int4 vertex_indices = bending_vertex_indices[bending_index];
+    float3 x0 = vertex_positions[vertex_indices[0]];
+    float3 x1 = vertex_positions[vertex_indices[1]];
+    float3 x2 = vertex_positions[vertex_indices[2]];
+    float3 x3 = vertex_positions[vertex_indices[3]];
 
     const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
     DRW_debug_line_v3v3(x0, x3, green);
+
+    float3 e = x1 - x2;
+    float3 nA = float3::cross(x2 - x0, x1 - x0);
+    float3 nB = float3::cross(x1 - x3, x2 - x3);
+
+    float e_norm = e.normalize_and_get_length();
+    float nA_norm = nA.normalize_and_get_length();
+    float nB_norm = nB.normalize_and_get_length();
+
+    float cos = float3::dot(nA, nB);
+    float sin = float3::dot(float3::cross(nA, nB), e);
+
+    float C = atan2(sin, cos);
+
+    float3 qA[4] = {x2 - x1, x0 - x2, x1 - x0, float3(0.0f)};
+    float3 qB[4] = {float3(0.0f), x2 - x3, x3 - x1, x1 - x2};
+    float3x3 qIe[4] = {
+        float3x3(0.0f), float3x3::diagonal(1.0f), float3x3::diagonal(-1.0f), float3x3(0.0f)};
+
+    float3 dC_dx[4];
+    float3 de_dx[4][3];
+    float3 dnA_dx[4][3];
+    float3 dnB_dx[4][3];
+    float dcos_dx[4][3];
+    float dsin_dx[4][3];
+
+    /* Forces */
+    for (int m : IndexRange(4)) {
+      float3x3 SA = float3x3::skew(qA[m]);
+      float3x3 SB = float3x3::skew(qB[m]);
+
+      for (int s : IndexRange(3)) {
+        de_dx[m][s] = qIe[m].row(s) / e_norm;
+        dnA_dx[m][s] = SA.row(s) / nA_norm; /* This could be precalculated. */
+        dnB_dx[m][s] = SB.row(s) / nB_norm; /* This could be precalculated. */
+        dcos_dx[m][s] = float3::dot(dnA_dx[m][s], nB) + float3::dot(nA, dnB_dx[m][s]);
+        dsin_dx[m][s] = float3::dot(
+                            float3::cross(dnA_dx[m][s], nB) + float3::cross(nA, dnB_dx[m][s]), e) +
+                        float3::dot(float3::cross(nA, nB), de_dx[m][s]);
+        dC_dx[m][s] = cos * dsin_dx[m][s] - sin * dcos_dx[m][s];
+      }
+      float3 force_m = -k * C * dC_dx[m];
+      vertex_forces[vertex_indices[m]] += force_m;
+    }
+
+    /* Force derivatives */
+
+    float3x3 dC_dx_mn[4][4];
+
+    for (int m : IndexRange(4)) {
+      for (int n : IndexRange(4)) {
+        for (int s : IndexRange(3)) {
+          for (int t : IndexRange(3)) {
+            float3 dnA_dx_mnst = normalA_second_derivatives[m][n][s][t] / nA_norm;
+            float3 dnB_dx_mnst = normalA_second_derivatives[m][n][s][t] / nB_norm;
+
+            float3 dnA_dx_ms = dnA_dx[m][s];
+            float3 dnA_dx_nt = dnA_dx[n][t];
+            float3 dnB_dx_ms = dnB_dx[m][s];
+            float3 dnB_dx_nt = dnB_dx[n][t];
+
+            float dcos_dx_mnst = float3::dot(dnA_dx_mnst, nB) + float3::dot(dnB_dx_nt, dnA_dx_ms) +
+                                 float3::dot(dnA_dx_nt, dnB_dx_ms) + float3::dot(nA, dnB_dx_mnst);
+
+            float dsin_dx_mnst =
+                float3::dot(float3::cross(dnA_dx_mnst, nB) + float3::cross(dnA_dx_ms, dnB_dx_nt) +
+                                float3::cross(dnA_dx_nt, dnB_dx_ms) +
+                                float3::cross(nA, dnB_dx_mnst),
+                            e) +
+                float3::dot(float3::cross(dnA_dx_ms, nB) + float3::cross(nA, dnB_dx_ms),
+                            de_dx[n][t]) +
+                float3::dot(float3::cross(dnA_dx_nt, nB) + float3::cross(nA, dnB_dx_nt),
+                            de_dx[m][s]);
+
+            dC_dx_mn[m][n].values[s][t] = dcos_dx[n][t] * dsin_dx[m][s] + cos * dsin_dx_mnst -
+                                          dsin_dx[n][t] * dcos_dx[m][s] - sin * dcos_dx_mnst;
+          }
+        }
+        float3x3 df_dx_mn = -k * (float3x3::outer(dC_dx[m], dC_dx[n]) + dC_dx_mn[m][n] * C);
+
+        int i = vertex_indices[m];
+        int j = vertex_indices[n];
+        vertex_force_derivatives.add(i, j, df_dx_mn);
+      }
+    }
   }
 
   void calculate_kinematic_collisions()
