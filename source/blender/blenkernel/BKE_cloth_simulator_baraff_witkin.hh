@@ -229,7 +229,7 @@ class ClothSimulatorBaraffWitkin {
       calculate_forces_and_derivatives();
 
       // integrate_explicit_forward_euler();
-      integrate_implicit_backward_euler_pcg_filtered();
+      // integrate_implicit_backward_euler_pcg_filtered();
     }
 
     // calculate_kinematic_collisions(); /* Placed here for debugging. */
@@ -297,6 +297,10 @@ class ClothSimulatorBaraffWitkin {
     triangle_stretch_stiffness_v = Array<float>(n_triangles, stretch_stiffness);
     triangle_shear_stiffness = Array<float>(n_triangles, shear_stiffness);
 
+    /* Maps from the 2 vertices of a looptri edge to an oppossing vertex. */
+    std::multimap<std::pair<int, int>, int> looptri_edge_opposing_vertices =
+        std::multimap<std::pair<int, int>, int>();
+
     /* Think about disjoint pieces of cloth and seams etc. */
     for (const int i : IndexRange(mesh.totloop)) {
       const MLoop &loop = mesh.mloop[i];
@@ -363,7 +367,44 @@ class ClothSimulatorBaraffWitkin {
 
       triangle_wu_derivatives[looptri_index] = dwu_dx;
       triangle_wv_derivatives[looptri_index] = dwv_dx;
+
+      /* Bending edges. */
+      looptri_edge_opposing_vertices.insert(
+          std::pair<std::pair<int, int>, int>(std::minmax(v0_index, v1_index), v2_index));
+      looptri_edge_opposing_vertices.insert(
+          std::pair<std::pair<int, int>, int>(std::minmax(v0_index, v2_index), v1_index));
+      looptri_edge_opposing_vertices.insert(
+          std::pair<std::pair<int, int>, int>(std::minmax(v1_index, v2_index), v0_index));
     }
+
+    Vector<int4> bending_indices_vector = Vector<int4>();
+
+    /* Here we need to check which looptri edges have 2 opposing vertices, these edges will
+     * become bending edges. */
+    for (std::multimap<std::pair<int, int>, int>::iterator it =
+             looptri_edge_opposing_vertices.begin();
+         it != looptri_edge_opposing_vertices.end();
+         it++) {
+      std::pair<int, int> edge = it->first;
+
+      /* Note that indices of the shared edge are stored in position 1 and 2, this is the
+       * convention used in the "Implementing Baraff Wikin" by David Pritchard. */
+      int v0 = it->second;
+      int v1 = edge.first;
+      int v2 = edge.second;
+
+      std::multimap<std::pair<int, int>, int>::iterator it_next = std::next(it, 1);
+
+      if (it_next != looptri_edge_opposing_vertices.end()) {
+        std::pair<int, int> edge_next = it_next->first;
+        if (edge == edge_next) { /* This means two looptris share this edge. */
+          int v3 = it_next->second;
+          bending_indices_vector.append(int4(v0, v1, v2, v3));
+        }
+      }
+    }
+
+    bending_vertex_indices = Array<int4>(bending_indices_vector.as_span());
   };
 
   void reset_forces_and_derivatives()
@@ -382,6 +423,10 @@ class ClothSimulatorBaraffWitkin {
       auto [wu, wv] = calculate_w_uv(triangle_index);
       calculate_stretch(triangle_index, wu, wv);
       calculate_shear(triangle_index, wu, wv);
+    }
+
+    for (int bending_index : IndexRange(bending_vertex_indices.size())) {
+      calculate_bend(bending_index);
     }
   }
 
@@ -561,6 +606,18 @@ class ClothSimulatorBaraffWitkin {
         vertex_force_derivatives.add(i, j, df_dx_mn);
       }
     }
+  }
+
+  void calculate_bend(int bending_index)
+  {
+    auto [v0_index, v1_index, v2_index, v3_index] = bending_vertex_indices[bending_index];
+    float3 x0 = vertex_positions[v0_index];
+    float3 x1 = vertex_positions[v1_index];
+    float3 x2 = vertex_positions[v2_index];
+    float3 x3 = vertex_positions[v3_index];
+
+    const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+    DRW_debug_line_v3v3(x0, x3, green);
   }
 
   void calculate_kinematic_collisions()
