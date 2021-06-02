@@ -81,6 +81,18 @@ class SparseMatrix {
     }
   }
 
+  void add_matrix(SparseMatrix &B)
+  {
+    /* This function currently only works for matrices with the same sparsity pattern. */
+    for (int i : IndexRange(n_rows)) {
+      for (std::pair<int, float3x3> p : rows[i]) {
+        int j = p.first;
+        float3x3 value = p.second;
+        rows[i][j] = value + B.get(i, j);
+      }
+    }
+  }
+
   void clear()
   {
     for (int i : IndexRange(n_rows)) {
