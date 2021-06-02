@@ -548,8 +548,8 @@ class ClothSimulatorBaraffWitkin {
     float kv = triangle_stretch_stiffness_v[ti];
 
     /* Temporary values. */
-    float kdu = ku / 1000.0f;
-    float kdv = kv / 1000.0f;
+    float kdu = ku / 100.0f;
+    float kdv = kv / 100.0f;
 
     Array<float3> dCu_dx = Array<float3>(3);
     Array<float3> dCv_dx = Array<float3>(3);
@@ -619,7 +619,7 @@ class ClothSimulatorBaraffWitkin {
     float3 dwv_dx = triangle_wv_derivatives[ti];
 
     float k = triangle_shear_stiffness[ti];
-    float kd = k / 1000.0f;
+    float kd = k / 10.0f;
 
     Array<float3> dC_dx = Array<float3>(3);
     float C_dot = 0.0f;
@@ -664,7 +664,7 @@ class ClothSimulatorBaraffWitkin {
   void calculate_bend(int bending_index)
   {
     float k = bending_stiffness[bending_index];
-    float kd = k / 1000.0f;
+    float kd = k / 10.0f;
 
     int4 vertex_indices = bending_vertex_indices[bending_index];
     float3 x0 = vertex_positions[vertex_indices[0]];
@@ -687,8 +687,10 @@ class ClothSimulatorBaraffWitkin {
 
     float3 qA[4] = {x2 - x1, x0 - x2, x1 - x0, float3(0.0f)};
     float3 qB[4] = {float3(0.0f), x2 - x3, x3 - x1, x1 - x2};
-    float3x3 qIe[4] = {
-        float3x3(0.0f), float3x3::diagonal(1.0f), float3x3::diagonal(-1.0f), float3x3(0.0f)};
+    float3x3 qIe[4] = {float3x3(0.0f),
+                       1.0f / e_norm * float3x3::diagonal(1.0f),
+                       1.0f / e_norm * float3x3::diagonal(-1.0f),
+                       float3x3(0.0f)};
 
     float3 dC_dx[4];
     float3 de_dx[4][3];
@@ -701,13 +703,13 @@ class ClothSimulatorBaraffWitkin {
 
     /* Forces */
     for (int m : IndexRange(4)) {
-      float3x3 SA = float3x3::skew(qA[m]);
-      float3x3 SB = float3x3::skew(qB[m]);
+      float3x3 SA = 1.0f / nA_norm * float3x3::skew(qA[m]);
+      float3x3 SB = 1.0f / nB_norm * float3x3::skew(qB[m]);
 
       for (int s : IndexRange(3)) {
-        de_dx[m][s] = qIe[m].row(s) / e_norm;
-        dnA_dx[m][s] = SA.row(s) / nA_norm; /* This could be precalculated. */
-        dnB_dx[m][s] = SB.row(s) / nB_norm; /* This could be precalculated. */
+        de_dx[m][s] = qIe[m].row(s);
+        dnA_dx[m][s] = SA.row(s);
+        dnB_dx[m][s] = SB.row(s);
         dcos_dx[m][s] = float3::dot(dnA_dx[m][s], nB) + float3::dot(nA, dnB_dx[m][s]);
         dsin_dx[m][s] = float3::dot(
                             float3::cross(dnA_dx[m][s], nB) + float3::cross(nA, dnB_dx[m][s]), e) +
