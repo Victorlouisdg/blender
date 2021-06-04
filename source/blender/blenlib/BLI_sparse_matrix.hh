@@ -174,7 +174,7 @@ class ConjugateGradientSolver {
 
  public:
   int n;
-  int max_iterations = 100;   /* If this is reached, something is probably wrong. */
+  int max_iterations = 100;    /* If this is reached, something is probably wrong. */
   float tolerance = 0.000001f; /* Not sure what tolerance is good enough. */
 
   Array<float3> r;
@@ -208,6 +208,12 @@ class ConjugateGradientSolver {
   {
     constraint_values[i] = value;
     constraint_filters[i] = filter;
+  }
+
+  void releaseConstraint(int i)
+  {
+    constraint_values.erase(i);
+    constraint_filters.erase(i);
   }
 
   void clearConstraints()
@@ -261,8 +267,8 @@ class ConjugateGradientSolver {
     for (int iteration : IndexRange(max_iterations)) {
       UNUSED_VARS(iteration);
       if (delta_new < tolerance) {
-        // std::cout << "Early stopping at " << iteration << std::endl;
-        break;
+        std::cout << "Early stopping at " << iteration << std::endl;
+        return;
       }
 
       A.multiply(c, q); /* q = Ac*/
@@ -285,6 +291,7 @@ class ConjugateGradientSolver {
       add(c, s);                        // c = s + beta * c
       filter(c);
     }
+    std::cout << "Solver failed to converge in " << max_iterations << " iterations." << std::endl;
   }
 };
 

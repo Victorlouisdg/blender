@@ -72,10 +72,11 @@ static Span<MLoopTri> get_mesh_looptris(const Mesh &mesh)
 class ClothSimulatorBaraffWitkin {
  public:
   const bool enable_shear = true;
-  const bool enable_bending = true;
+  const bool enable_bending = false;
+
   const bool damp_stretch = true;
   const bool damp_shear = true;
-  const bool damp_bending = true;
+  const bool damp_bending = false;
 
   int n_vertices;
   int n_triangles;
@@ -84,6 +85,8 @@ class ClothSimulatorBaraffWitkin {
   int n_substeps;
   float step_time; /* Currently assuming 30 fps. */
   float substep_time;
+
+  int current_substep; /* Mostly used for debug drawing at last substep. */
 
   ConjugateGradientSolver solver;
 
@@ -138,6 +141,8 @@ class ClothSimulatorBaraffWitkin {
   Array<float3> collision_triangle_normals;
   Array<float3> collision_edge_normals;
 
+  std::map<int, float3> collision_constrained_vertices_directions;
+
   /* Maybe turn this into a class LoopTriEdge that overwrite the hash() function? */
   /* Currently storing looptri edges as a stored pair of vertex indices. */
   std::map<std::pair<int, int>, float3> looptri_edge_normals;
@@ -151,7 +156,7 @@ class ClothSimulatorBaraffWitkin {
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
 
-    n_substeps = 10;
+    n_substeps = 20;
     step_time = 1.0f / 30.0f; /* Currently assuming 30 fps. */
     substep_time = step_time / n_substeps;
 
@@ -163,6 +168,8 @@ class ClothSimulatorBaraffWitkin {
     vertex_force_derivatives = SparseMatrix(n_vertices);
     vertex_force_velocity_derivatives = SparseMatrix(n_vertices);
     solver = ConjugateGradientSolver(n_vertices);
+
+    collision_constrained_vertices_directions = std::map<int, float3>();
 
     // verify_w_derivatives(); /* For debugging, could become a test. */
   };
@@ -233,17 +240,15 @@ class ClothSimulatorBaraffWitkin {
   void step()
   {
     for (int substep : IndexRange(n_substeps)) {
-      UNUSED_VARS(substep);
+      current_substep = substep;
       reset_forces_and_derivatives();
 
-      // calculate_kinematic_collisions();
+      calculate_kinematic_collisions();
       calculate_forces_and_derivatives();
 
       // integrate_explicit_forward_euler();
       integrate_implicit_backward_euler_pcg_filtered();
     }
-
-    // calculate_kinematic_collisions(); /* Placed here for debugging. */
   };
 
   void verify_w_derivatives()
@@ -301,7 +306,7 @@ class ClothSimulatorBaraffWitkin {
     triangle_wu_derivatives = Array<float3>(n_triangles);
     triangle_wv_derivatives = Array<float3>(n_triangles);
 
-    float stretch_stiffness = 5000.0f;
+    float stretch_stiffness = 20000.0f;
     float shear_stiffness = 1000.0f;
 
     triangle_stretch_stiffness_u = Array<float>(n_triangles, stretch_stiffness);
@@ -342,6 +347,8 @@ class ClothSimulatorBaraffWitkin {
        * by the two input vectors, the triangle area is conveniently half of this area. */
       const float triangle_area_uv = normal.length() / 2;
       triangle_areas_uv[looptri_index] = triangle_area_uv;
+      // triangle_areas_uv[looptri_index] = powf(triangle_area_uv, 0.75f); /* Pritchard's
+      // recommendation. */
 
       float2 uv0 = vertex_positions_uv[v0_index];
       float2 uv1 = vertex_positions_uv[v1_index];
@@ -418,7 +425,7 @@ class ClothSimulatorBaraffWitkin {
     bending_vertex_indices = Array<int4>(bending_indices_vector.as_span());
     n_bending_edges = bending_vertex_indices.size();
 
-    bending_stiffness = Array<float>(n_bending_edges, 0.2f);
+    bending_stiffness = Array<float>(n_bending_edges, 0.01f);
   };
 
   void calculate_forces_and_derivatives()
@@ -479,10 +486,7 @@ class ClothSimulatorBaraffWitkin {
     dfdv.multiply_float(h);
     A.add_matrix(dfdv);
     for (int i : IndexRange(A.n_rows)) {
-      float3x3 mass_matrix = float3x3(0.0f);
-      mass_matrix.values[0][0] = vertex_masses[i];
-      mass_matrix.values[1][1] = vertex_masses[i];
-      mass_matrix.values[2][2] = vertex_masses[i];
+      float3x3 mass_matrix = float3x3::diagonal(vertex_masses[i]);
       A.insert(i, i, mass_matrix - A.get(i, i));
     }
 
@@ -495,10 +499,24 @@ class ClothSimulatorBaraffWitkin {
     A.multiply(delta_v, e); /* e = Ax */
     subtract_from(e, b);    /* e = b - Ax */
 
-    std::cout << std::endl;
+    /* Releasing constraints that pull towards the surface. */
+    std::map<int, float3> &m = collision_constrained_vertices_directions;
+    for (auto it = m.cbegin(); it != m.cend(); /* no increment */) {
 
-    for (int i : IndexRange(n_vertices)) {
-      std::cout << e[i] << std::endl;
+      int i = it->first;
+      float3 constrained_direction = it->second;
+      float3 constraining_force = e[i];
+
+      bool force_pulling_towards_surface = float3::dot(constrained_direction, constraining_force) <
+                                           0.0f;
+
+      if (force_pulling_towards_surface) {
+        solver.releaseConstraint(i);
+        m.erase(it++);
+      }
+      else {
+        ++it;
+      }
     }
 
     for (int i : IndexRange(n_vertices)) {
@@ -576,20 +594,25 @@ class ClothSimulatorBaraffWitkin {
       dCu_dx[m] = area_uv * dwu_dx[m] * wu;
       dCv_dx[m] = area_uv * dwv_dx[m] * wv;
 
-      int i = vertex_indices[m];
-      Cu_dot += float3::dot(dCu_dx[m], vertex_velocities[i]);
-      Cv_dot += float3::dot(dCv_dx[m], vertex_velocities[i]);
+      if (damp_stretch) {
+        int i = vertex_indices[m];
+        Cu_dot += float3::dot(dCu_dx[m], vertex_velocities[i]);
+        Cv_dot += float3::dot(dCv_dx[m], vertex_velocities[i]);
+      }
     }
 
     for (int m : IndexRange(3)) {
       float3 force_m_u = -ku * Cu * dCu_dx[m];
       float3 force_m_v = -kv * Cv * dCv_dx[m];
 
-      float3 damping_force_m_u = -kdu * Cu_dot * dCu_dx[m];
-      float3 damping_force_m_v = -kdv * Cv_dot * dCv_dx[m];
-
       int i = vertex_indices[m];
-      vertex_forces[i] += force_m_u + force_m_v + damping_force_m_u + damping_force_m_v;
+      vertex_forces[i] += force_m_u + force_m_v;
+
+      if (damp_stretch) {
+        float3 damping_force_m_u = -kdu * Cu_dot * dCu_dx[m];
+        float3 damping_force_m_v = -kdv * Cv_dot * dCv_dx[m];
+        vertex_forces[i] += damping_force_m_u + damping_force_m_v;
+      }
     }
 
     /* Force derivatives */
@@ -606,16 +629,19 @@ class ClothSimulatorBaraffWitkin {
         float3x3 dCv_outer = float3x3::outer(dCv_dx[m], dCv_dx[n]);
         float3x3 dfv_dx_mn = -kv * (dCv_outer + Cv * dCv_dx_mn);
 
-        float3x3 ddu_dx_mn = -kdu * Cu_dot * dCu_dx_mn;
-        float3x3 ddv_dx_mn = -kdv * Cv_dot * dCv_dx_mn;
-
         int i = vertex_indices[m];
         int j = vertex_indices[n];
-        vertex_force_derivatives.add(i, j, dfu_dx_mn + dfv_dx_mn + ddu_dx_mn + ddv_dx_mn);
+        vertex_force_derivatives.add(i, j, dfu_dx_mn + dfv_dx_mn);
 
-        float3x3 ddu_dv_nm = -kdu * dCu_outer;
-        float3x3 ddv_dv_nm = -kdv * dCv_outer;
-        vertex_force_velocity_derivatives.add(i, j, ddu_dv_nm + ddv_dv_nm);
+        if (damp_stretch) {
+          float3x3 ddu_dx_mn = -kdu * Cu_dot * dCu_dx_mn;
+          float3x3 ddv_dx_mn = -kdv * Cv_dot * dCv_dx_mn;
+          vertex_force_derivatives.add(i, j, ddu_dx_mn + ddv_dx_mn);
+
+          float3x3 ddu_dv_nm = -kdu * dCu_outer;
+          float3x3 ddv_dv_nm = -kdv * dCv_outer;
+          vertex_force_velocity_derivatives.add(i, j, ddu_dv_nm + ddv_dv_nm);
+        }
       }
     }
   }
@@ -633,7 +659,7 @@ class ClothSimulatorBaraffWitkin {
     float3 dwv_dx = triangle_wv_derivatives[ti];
 
     float k = triangle_shear_stiffness[ti];
-    float kd = k * 0.1f;
+    float kd = k * 0.01f;
 
     Array<float3> dC_dx = Array<float3>(3);
     float C_dot = 0.0f;
@@ -687,7 +713,7 @@ class ClothSimulatorBaraffWitkin {
   void calculate_bend(int bending_index)
   {
     float k = bending_stiffness[bending_index];
-    float kd = k * 0.1f;
+    float kd = k * 0.01f;
 
     int4 vertex_indices = bending_vertex_indices[bending_index];
     float3 x0 = vertex_positions[vertex_indices[0]];
@@ -845,7 +871,7 @@ class ClothSimulatorBaraffWitkin {
     const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
     const float red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
 
-    float offset = 0.1f;
+    float offset = 0.01f;
 
     for (int i : IndexRange(n_vertices)) {
       float3 x = vertex_positions[i];
@@ -853,18 +879,26 @@ class ClothSimulatorBaraffWitkin {
       float distance = collision_distances[i];
 
       if (distance > offset) {
-        // DRW_debug_line_v3v3(x, closest_point, green);
+
+        if (current_substep == n_substeps - 1) {
+          DRW_debug_line_v3v3(x, closest_point, green);
+        }
       }
       else {
-        // DRW_debug_line_v3v3(x, closest_point, red);
+        if (current_substep == n_substeps - 1) {
+          DRW_debug_line_v3v3(x, closest_point, red);
+        }
         int closest_triangle_index = collision_closest_triangle_indices[i];
         float3 normal = collision_triangle_normals[closest_triangle_index];
 
         float3x3 S = float3x3::identity() - float3x3::outer(normal, normal);
-        float3 constrained_velocity = float3::dot(normal, -vertex_velocities[i]) * normal;
+        // float3 constrained_velocity = float3::dot(normal, -vertex_velocities[i]) * normal;
+
         /* TODO maybe multiply constraint by h as Pritchard suggests? */
 
-        solver.setConstraint(i, constrained_velocity, S);
+        solver.setConstraint(i, -vertex_velocities[i], S);
+        // solver.setConstraint(i, -vertex_velocities[i], float3x3(0.0f));
+        collision_constrained_vertices_directions[i] = normal;
       }
     }
   }
