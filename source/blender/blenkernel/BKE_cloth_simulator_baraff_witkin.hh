@@ -25,6 +25,8 @@ extern "C" {
 #include "draw_debug.h"
 }
 
+#include <eigen3/Eigen/Dense>
+
 /* Note about variable names in the simulator: in general I've tried to give the member
  * variables/attributes long and clear names. I deliberately read these out into local variable
  * with much shorter (often 2 letter) names. This is because long variable names would obfuscate
@@ -72,7 +74,7 @@ static Span<MLoopTri> get_mesh_looptris(const Mesh &mesh)
 class ClothSimulatorBaraffWitkin {
  public:
   const bool enable_shear = true;
-  const bool enable_bending = false;
+  const bool enable_bending = true;
 
   const bool damp_stretch = true;
   const bool damp_shear = true;
@@ -112,12 +114,15 @@ class ClothSimulatorBaraffWitkin {
   Array<float> triangle_stretch_stiffness_v;
   Array<float> triangle_shear_stiffness;
   Array<float> bending_stiffness;
+  Array<float> bending_rest_lengths;
 
   Array<float> triangle_areas_uv;
   Array<float3> edges_normals;
 
   float density = 0.2f;            /* in kg/m^2 */
   float standard_gravity = -9.81f; /* in m/s^2 */
+
+  Vector<int> pinned_vertices;
 
   /* Datastructures for intermediate computations. */
   SparseMatrix vertex_force_derivatives;           // <float3x3> elements
@@ -156,7 +161,7 @@ class ClothSimulatorBaraffWitkin {
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
 
-    n_substeps = 20;
+    n_substeps = 100;         // 20;
     step_time = 1.0f / 30.0f; /* Currently assuming 30 fps. */
     substep_time = step_time / n_substeps;
 
@@ -170,12 +175,14 @@ class ClothSimulatorBaraffWitkin {
     solver = ConjugateGradientSolver(n_vertices);
 
     collision_constrained_vertices_directions = std::map<int, float3>();
+    pinned_vertices = Vector<int>();
 
     // verify_w_derivatives(); /* For debugging, could become a test. */
   };
 
   void pin(int vertex_index)
   {
+    pinned_vertices.append(vertex_index);
     solver.setConstraint(vertex_index, float3(0.0f), float3x3(0.0f));
   }
 
@@ -228,13 +235,6 @@ class ClothSimulatorBaraffWitkin {
       looptri_edge_normals[std::minmax(v0_index, v2_index)] += normal;
       looptri_edge_normals[std::minmax(v1_index, v2_index)] += normal;
     }
-
-    std::cout << "looptri edge normals" << std::endl;
-    for (std::pair<std::pair<int, int>, float3> p : looptri_edge_normals) {
-      std::cout << p.first.first << ", " << p.first.second << ": " << p.second << std::endl;
-    }
-
-    std::cout << "Collision mesh set." << std::endl;
   }
 
   void step()
@@ -243,11 +243,11 @@ class ClothSimulatorBaraffWitkin {
       current_substep = substep;
       reset_forces_and_derivatives();
 
-      calculate_kinematic_collisions();
+      // calculate_kinematic_collisions();
       calculate_forces_and_derivatives();
 
-      // integrate_explicit_forward_euler();
-      integrate_implicit_backward_euler_pcg_filtered();
+      integrate_explicit_forward_euler();
+      // integrate_implicit_backward_euler_pcg_filtered();
     }
   };
 
@@ -396,6 +396,7 @@ class ClothSimulatorBaraffWitkin {
     }
 
     Vector<int4> bending_indices_vector = Vector<int4>();
+    Vector<float> bending_rest_lengths_vector = Vector<float>();
 
     /* Here we need to check which looptri edges have 2 opposing vertices, these edges will
      * become bending edges. */
@@ -418,14 +419,20 @@ class ClothSimulatorBaraffWitkin {
         if (edge == edge_next) { /* This means two looptris share this edge. */
           int v3 = it_next->second;
           bending_indices_vector.append(int4(v0, v1, v2, v3));
+          float3 x0 = vertex_positions[v0];
+          float3 x3 = vertex_positions[v3];
+          float rest_length = (x3 - x0).length();
+          bending_rest_lengths_vector.append(rest_length);
         }
       }
     }
 
     bending_vertex_indices = Array<int4>(bending_indices_vector.as_span());
+    bending_rest_lengths = Array<float>(bending_rest_lengths_vector.as_span());
     n_bending_edges = bending_vertex_indices.size();
 
-    bending_stiffness = Array<float>(n_bending_edges, 0.01f);
+    // bending_stiffness = Array<float>(n_bending_edges, 0.01f);
+    bending_stiffness = Array<float>(n_bending_edges, 5000.0f);
   };
 
   void calculate_forces_and_derivatives()
@@ -444,7 +451,7 @@ class ClothSimulatorBaraffWitkin {
 
     if (enable_bending) {
       for (int bending_index : IndexRange(bending_vertex_indices.size())) {
-        calculate_bend(bending_index);
+        calculate_bend_choi(bending_index);
       }
     }
   }
@@ -457,6 +464,13 @@ class ClothSimulatorBaraffWitkin {
     /* TODO: look into doing these Array-based operations with std::transform() etc. */
     for (int i : IndexRange(n_vertices)) {
       vertex_accelerations[i] = 1.0f / vertex_masses[i] * vertex_forces[i];
+    }
+
+    for (int i : pinned_vertices) {
+      vertex_accelerations[i] = float3(0.0f);
+    }
+
+    for (int i : IndexRange(n_vertices)) {
       vertex_velocities[i] += vertex_accelerations[i] * substep_time;
       vertex_positions[i] += vertex_velocities[i] * substep_time;
     }
@@ -579,6 +593,14 @@ class ClothSimulatorBaraffWitkin {
     float ku = triangle_stretch_stiffness_u[ti];
     float kv = triangle_stretch_stiffness_v[ti];
 
+    /* Disables compression response. */
+    // if (wu_norm < 1.0) {
+    //   ku = 0.0f;
+    // }
+    // if (wv_norm < 1.0) {
+    //   kv = 0.0f;
+    // }
+
     /* Temporary values. */
     float kdu = ku * 0.01f;
     float kdv = kv * 0.01f;
@@ -659,7 +681,7 @@ class ClothSimulatorBaraffWitkin {
     float3 dwv_dx = triangle_wv_derivatives[ti];
 
     float k = triangle_shear_stiffness[ti];
-    float kd = k * 0.01f;
+    float kd = k * 0.1f;
 
     Array<float3> dC_dx = Array<float3>(3);
     float C_dot = 0.0f;
@@ -710,6 +732,127 @@ class ClothSimulatorBaraffWitkin {
     }
   }
 
+  // float bending_force_magnitude_choi(float length, float rest_length)
+  // {
+  //   float x = length / rest_length;
+  //   /* Below is a fifth order polynomial that approximates the sinc(x) function (Taylor series).
+  //    * It's not explicitly given in the original paper, but can be found on paga 17 here:
+  //    * https://www.iam.ubc.ca/wp-content/uploads/2018/10/EBoxerman_MSc_Thesis-3.pdf
+  //    */
+  //   float xx = x * x;
+  //   float xxx = xx * x;
+  //   float xxxx = xxx * x;
+  //   return (-11.541f * xxxx + 34.193f * xxx - 39.083f * xx + 23.116f * x - 9.713f);
+  // }
+
+  // void calculate_bend_choi(int bending_index)
+  // {
+  //   float k = bending_stiffness[bending_index];
+  //   int4 vertex_indices = bending_vertex_indices[bending_index];
+  //   float rest_length = bending_rest_lengths[bending_index];
+
+  //   float3 x1 = vertex_positions[vertex_indices[1]];
+  //   float3 x2 = vertex_positions[vertex_indices[2]];
+
+  //   float3 direction = x2 - x1;
+  //   float length = direction.normalize_and_get_length();
+
+  //   if (length >= rest_length) {
+  //     return;
+  //   }
+
+  //   float c = k;  // Still have figure out what this c is
+
+  //   float force_magnitude = k * bending_force_magnitude_choi(length, rest_length);
+  //   float force_magnitude2 = c * (length - rest_length);
+
+  //   force_magnitude = std::max(force_magnitude, force_magnitude2);
+
+  //   float3 force = force_magnitude * direction;
+
+  //   int i = vertex_indices[1];
+  //   int j = vertex_indices[2];
+
+  //   vertex_forces[i] += force;
+  //   vertex_forces[j] -= force;
+  // }
+
+  BLI_INLINE float fb(float length, float L)
+  {
+    float x = length / L;
+    float xx = x * x;
+    float xxx = xx * x;
+    float xxxx = xxx * x;
+    return (-11.541f * xxxx + 34.193f * xxx - 39.083f * xx + 23.116f * x - 9.713f);
+  }
+
+  // BLI_INLINE float fbderiv(float length, float L)
+  // {
+  //   float x = length / L;
+  //   float xx = x * x;
+  //   float xxx = xx * x;
+  //   return (-46.164f * xxx + 102.579f * xx - 78.166f * x + 23.116f);
+  // }
+
+  BLI_INLINE float fbstar(float length, float L, float kb, float cb)
+  {
+    float tempfb_fl = kb * fb(length, L);
+    float fbstar_fl = cb * (length - L);
+
+    if (tempfb_fl < fbstar_fl) {
+      return fbstar_fl;
+    }
+
+    return tempfb_fl;
+  }
+
+  // BLI_INLINE float fbstar_jacobi(float length, float L, float kb, float cb)
+  // {
+  //   float tempfb_fl = kb * fb(length, L);
+  //   float fbstar_fl = cb * (length - L);
+
+  //   if (tempfb_fl < fbstar_fl) {
+  //     return -cb;
+  //   }
+
+  //   return -kb * fbderiv(length, L);
+  // }
+
+  void calculate_bend_choi(int bending_index)
+  {
+    float k = bending_stiffness[bending_index];
+    int4 vertex_indices = bending_vertex_indices[bending_index];
+    float rest_length = bending_rest_lengths[bending_index];
+
+    float3 x1 = vertex_positions[vertex_indices[0]];
+    float3 x2 = vertex_positions[vertex_indices[3]];
+
+    float3 direction = x2 - x1;
+    float length = direction.normalize_and_get_length();
+
+    if (length >= rest_length) {
+      return;
+    }
+
+    float c = k;  // Still have figure out what this c is
+
+    float force_magnitude = fbstar(length, rest_length, k, c);
+    float3 force = force_magnitude * direction;
+
+    int i = vertex_indices[0];
+    int j = vertex_indices[3];
+
+    vertex_forces[i] += force;
+    vertex_forces[j] -= force;
+
+    // const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+
+    // if (current_substep == n_substeps - 1) {
+    //   DRW_debug_line_v3v3(x1, x1 + force, green);
+    //   DRW_debug_line_v3v3(x2, x2 - force, green);
+    // }
+  }
+
   void calculate_bend(int bending_index)
   {
     float k = bending_stiffness[bending_index];
@@ -732,7 +875,7 @@ class ClothSimulatorBaraffWitkin {
     float cos = float3::dot(nA, nB);
     float sin = float3::dot(float3::cross(nA, nB), e);
 
-    float C = atan2(sin, cos);
+    float C = atan2f(sin, cos);
 
     float3 qA[4] = {x2 - x1, x0 - x2, x1 - x0, float3(0.0f)};
     float3 qB[4] = {float3(0.0f), x2 - x3, x3 - x1, x1 - x2};
@@ -792,6 +935,9 @@ class ClothSimulatorBaraffWitkin {
       for (int n : IndexRange(4)) {
         for (int s : IndexRange(3)) {
           for (int t : IndexRange(3)) {
+
+            /* TODO think over whether s and t might need to be swapped. */
+
             float3 dnA_dx_mnst = normalA_second_derivatives[m][n][s][t] / nA_norm;
             float3 dnB_dx_mnst = normalA_second_derivatives[m][n][s][t] / nB_norm;
 
@@ -813,7 +959,9 @@ class ClothSimulatorBaraffWitkin {
                 float3::dot(float3::cross(dnA_dx_nt, nB) + float3::cross(nA, dnB_dx_nt),
                             de_dx[m][s]);
 
-            dC_dx_mn[m][n].values[s][t] = dcos_dx[n][t] * dsin_dx[m][s] + cos * dsin_dx_mnst -
+            /* t ans s are swapped here due to the column wise storage of small matrices in
+             * blender. */
+            dC_dx_mn[m][n].values[t][s] = dcos_dx[n][t] * dsin_dx[m][s] + cos * dsin_dx_mnst -
                                           dsin_dx[n][t] * dcos_dx[m][s] - sin * dcos_dx_mnst;
           }
         }
@@ -881,12 +1029,12 @@ class ClothSimulatorBaraffWitkin {
       if (distance > offset) {
 
         if (current_substep == n_substeps - 1) {
-          DRW_debug_line_v3v3(x, closest_point, green);
+          // DRW_debug_line_v3v3(x, closest_point, green);
         }
       }
       else {
         if (current_substep == n_substeps - 1) {
-          DRW_debug_line_v3v3(x, closest_point, red);
+          // DRW_debug_line_v3v3(x, closest_point, red);
         }
         int closest_triangle_index = collision_closest_triangle_indices[i];
         float3 normal = collision_triangle_normals[closest_triangle_index];

@@ -5,6 +5,9 @@
 #include "testing/testing.h"
 #include <numeric>
 
+#include <eigen3/Eigen/Dense>
+#include <eigen3/Eigen/Sparse>
+
 namespace blender::tests {
 
 TEST(sparse_matrix, Insert)
@@ -153,6 +156,15 @@ TEST(sparse_matrix, SolvePCGRandomMatrix)
   }
 
   EXPECT_TRUE(sum < 0.00001f);
+}
+
+TEST(sparse_matrix, Eigen)
+{
+  SparseMatrix A = SparseMatrix(150);
+
+  Eigen::MatrixXd A_eigen = A.to_eigen_dense();
+
+  std::cout << A_eigen << std::endl;
 }
 
 }  // namespace blender::tests

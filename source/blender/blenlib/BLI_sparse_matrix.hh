@@ -2,6 +2,8 @@
 #include "BLI_float3x3.hh"
 #include <map>
 
+#include <eigen3/Eigen/Dense>
+
 /* This sparse matrix class was specifically designed for the Baraff-Witkin Cloth Simulator.
  * The matrices used there have some properties we can optimize for:
  *
@@ -98,6 +100,34 @@ class SparseMatrix {
     for (int i : IndexRange(n_rows)) {
       rows[i].clear();
     }
+  }
+
+  Eigen::MatrixXd to_eigen_dense()
+  {
+    Eigen::MatrixXd eigen_matrix(3 * n_rows, 3 * n_rows);
+    for (int i : IndexRange(n_rows)) {
+      for (int j : IndexRange(n_rows)) {
+
+        std::map<int, float3x3>::iterator it = rows[i].find(j);
+
+        if (it != rows[i].end()) {
+          float3x3 block = it->second;
+          for (int m : IndexRange(3)) {
+            for (int n : IndexRange(3)) {
+              eigen_matrix(3 * i + m, 3 * j + n) = block.values[j][i];
+            }
+          }
+        }
+        else {
+          for (int m : IndexRange(3)) {
+            for (int n : IndexRange(3)) {
+              eigen_matrix(3 * i + m, 3 * j + n) = 0.0f;
+            }
+          }
+        }
+      }
+    }
+    return eigen_matrix;
   }
 };
 
