@@ -80,6 +80,10 @@ class ClothSimulatorBaraffWitkin {
   const bool damp_shear = true;
   const bool damp_bending = false;
 
+  const float stretch_stiffness_value = 20000.0f;
+  const float shear_stiffness_value = 1000.0f;
+  const float bending_stiffness_value = 50000.0f;
+
   int n_vertices;
   int n_triangles;
   int n_bending_edges;
@@ -161,7 +165,7 @@ class ClothSimulatorBaraffWitkin {
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
 
-    n_substeps = 100;         // 20;
+    n_substeps = 200;
     step_time = 1.0f / 30.0f; /* Currently assuming 30 fps. */
     substep_time = step_time / n_substeps;
 
@@ -239,6 +243,8 @@ class ClothSimulatorBaraffWitkin {
 
   void step()
   {
+
+    std::cout << "step" << std::endl;
     for (int substep : IndexRange(n_substeps)) {
       current_substep = substep;
       reset_forces_and_derivatives();
@@ -246,8 +252,8 @@ class ClothSimulatorBaraffWitkin {
       // calculate_kinematic_collisions();
       calculate_forces_and_derivatives();
 
-      integrate_explicit_forward_euler();
-      // integrate_implicit_backward_euler_pcg_filtered();
+      // integrate_explicit_forward_euler();
+      integrate_implicit_backward_euler_pcg_filtered();
     }
   };
 
@@ -306,12 +312,9 @@ class ClothSimulatorBaraffWitkin {
     triangle_wu_derivatives = Array<float3>(n_triangles);
     triangle_wv_derivatives = Array<float3>(n_triangles);
 
-    float stretch_stiffness = 20000.0f;
-    float shear_stiffness = 1000.0f;
-
-    triangle_stretch_stiffness_u = Array<float>(n_triangles, stretch_stiffness);
-    triangle_stretch_stiffness_v = Array<float>(n_triangles, stretch_stiffness);
-    triangle_shear_stiffness = Array<float>(n_triangles, shear_stiffness);
+    triangle_stretch_stiffness_u = Array<float>(n_triangles, stretch_stiffness_value);
+    triangle_stretch_stiffness_v = Array<float>(n_triangles, stretch_stiffness_value);
+    triangle_shear_stiffness = Array<float>(n_triangles, shear_stiffness_value);
 
     /* Maps from the 2 vertices of a looptri edge to an oppossing vertex. */
     std::multimap<std::pair<int, int>, int> looptri_edge_opposing_vertices =
@@ -431,8 +434,7 @@ class ClothSimulatorBaraffWitkin {
     bending_rest_lengths = Array<float>(bending_rest_lengths_vector.as_span());
     n_bending_edges = bending_vertex_indices.size();
 
-    // bending_stiffness = Array<float>(n_bending_edges, 0.01f);
-    bending_stiffness = Array<float>(n_bending_edges, 5000.0f);
+    bending_stiffness = Array<float>(n_bending_edges, bending_stiffness_value);
   };
 
   void calculate_forces_and_derivatives()
@@ -786,13 +788,13 @@ class ClothSimulatorBaraffWitkin {
     return (-11.541f * xxxx + 34.193f * xxx - 39.083f * xx + 23.116f * x - 9.713f);
   }
 
-  // BLI_INLINE float fbderiv(float length, float L)
-  // {
-  //   float x = length / L;
-  //   float xx = x * x;
-  //   float xxx = xx * x;
-  //   return (-46.164f * xxx + 102.579f * xx - 78.166f * x + 23.116f);
-  // }
+  BLI_INLINE float fbderiv(float length, float L)
+  {
+    float x = length / L;
+    float xx = x * x;
+    float xxx = xx * x;
+    return (-46.164f * xxx + 102.579f * xx - 78.166f * x + 23.116f);
+  }
 
   BLI_INLINE float fbstar(float length, float L, float kb, float cb)
   {
@@ -806,17 +808,17 @@ class ClothSimulatorBaraffWitkin {
     return tempfb_fl;
   }
 
-  // BLI_INLINE float fbstar_jacobi(float length, float L, float kb, float cb)
-  // {
-  //   float tempfb_fl = kb * fb(length, L);
-  //   float fbstar_fl = cb * (length - L);
+  BLI_INLINE float fbstar_jacobi(float length, float L, float kb, float cb)
+  {
+    float tempfb_fl = kb * fb(length, L);
+    float fbstar_fl = cb * (length - L);
 
-  //   if (tempfb_fl < fbstar_fl) {
-  //     return -cb;
-  //   }
+    if (tempfb_fl < fbstar_fl) {
+      return -cb;
+    }
 
-  //   return -kb * fbderiv(length, L);
-  // }
+    return -kb * fbderiv(length, L);
+  }
 
   void calculate_bend_choi(int bending_index)
   {
@@ -824,10 +826,10 @@ class ClothSimulatorBaraffWitkin {
     int4 vertex_indices = bending_vertex_indices[bending_index];
     float rest_length = bending_rest_lengths[bending_index];
 
-    float3 x1 = vertex_positions[vertex_indices[0]];
-    float3 x2 = vertex_positions[vertex_indices[3]];
+    float3 x0 = vertex_positions[vertex_indices[0]];
+    float3 x3 = vertex_positions[vertex_indices[3]];
 
-    float3 direction = x2 - x1;
+    float3 direction = x3 - x0;
     float length = direction.normalize_and_get_length();
 
     if (length >= rest_length) {
@@ -837,20 +839,37 @@ class ClothSimulatorBaraffWitkin {
     float c = k;  // Still have figure out what this c is
 
     float force_magnitude = fbstar(length, rest_length, k, c);
+    // float force_magnitude = k * (length - rest_length);
     float3 force = force_magnitude * direction;
 
     int i = vertex_indices[0];
     int j = vertex_indices[3];
 
+    std::cout << std::endl;
+    std::cout << "Bending spring between " << i << " and " << j << std::endl;
+    std::cout << "rest_length " << rest_length << std::endl;
+    std::cout << "stiffness " << k << std::endl;
+    std::cout << "direction " << direction << std::endl;
+    std::cout << "force magnitude " << force_magnitude << std::endl;
+
     vertex_forces[i] += force;
     vertex_forces[j] -= force;
 
-    // const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+    float3x3 dfdx = -fbstar_jacobi(length, rest_length, k, c) *
+                    float3x3::outer(direction, direction); // boxerman divides this by the dotproduct
 
-    // if (current_substep == n_substeps - 1) {
-    //   DRW_debug_line_v3v3(x1, x1 + force, green);
-    //   DRW_debug_line_v3v3(x2, x2 - force, green);
-    // }
+    vertex_force_derivatives.add(i, j, dfdx);
+    vertex_force_derivatives.add(j, i, dfdx);
+
+    const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+    const float red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+
+    if (current_substep == n_substeps - 1) {
+      DRW_debug_line_v3v3(x0, x3, green);
+
+      DRW_debug_line_v3v3(x0, x0 + force, red);
+      DRW_debug_line_v3v3(x3, x3 - force, red);
+    }
   }
 
   void calculate_bend(int bending_index)
