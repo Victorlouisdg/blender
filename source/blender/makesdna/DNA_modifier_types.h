@@ -2352,6 +2352,17 @@ typedef struct ClothBWModifierData {
   /* Name of vertex group to of the vertices to pin, MAX_VGROUP_NAME. */
   char defgrp_name[64];
 
+  int n_substeps;
+  char _pad0[4];
+
+  float stretch_stiffness;
+  float shear_stiffness;
+  float bending_stiffness;
+
+  float stretch_damping_factor;
+  float shear_damping_factor;
+  float bending_damping_factor;
+
   void *simulator_object;
 
 } ClothBWModifierData;

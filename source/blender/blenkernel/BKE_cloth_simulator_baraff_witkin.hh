@@ -78,11 +78,11 @@ class ClothSimulatorBaraffWitkin {
 
   const bool damp_stretch = true;
   const bool damp_shear = true;
-  const bool damp_bending = false;
+  const bool damp_bending = true;
 
-  const float stretch_stiffness_value = 20000.0f;
-  const float shear_stiffness_value = 1000.0f;
-  const float bending_stiffness_value = 50000.0f;
+  float stretch_damping_factor;
+  float shear_damping_factor;
+  float bending_damping_factor;
 
   int n_vertices;
   int n_triangles;
@@ -161,18 +161,30 @@ class ClothSimulatorBaraffWitkin {
    * the simulator faster due to better data locality. I'll make setters() for certain attributes
    * later that do the required recalculations.
    */
-  void initialize(const Mesh &mesh)
+  void initialize(const Mesh &mesh,
+                  int n_substeps,
+                  float stretch_stiffness_value,
+                  float shear_stiffness_value,
+                  float bending_stiffness_value,
+                  float stretch_damping_factor,
+                  float shear_damping_factor,
+                  float bending_damping_factor)
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
 
-    n_substeps = 200;
+    this->n_substeps = n_substeps;
     step_time = 1.0f / 30.0f; /* Currently assuming 30 fps. */
     substep_time = step_time / n_substeps;
 
     n_vertices = mesh.totvert;
 
+    this->stretch_damping_factor = stretch_damping_factor;
+    this->shear_damping_factor = shear_damping_factor;
+    this->bending_damping_factor = bending_damping_factor;
+
     initialize_vertex_attributes(mesh);
-    initialize_triangle_attributes(mesh);
+    initialize_triangle_attributes(
+        mesh, stretch_stiffness_value, shear_stiffness_value, bending_stiffness_value);
 
     vertex_force_derivatives = SparseMatrix(n_vertices);
     vertex_force_velocity_derivatives = SparseMatrix(n_vertices);
@@ -252,8 +264,8 @@ class ClothSimulatorBaraffWitkin {
       // calculate_kinematic_collisions();
       calculate_forces_and_derivatives();
 
-      // integrate_explicit_forward_euler();
-      integrate_implicit_backward_euler_pcg_filtered();
+      integrate_explicit_forward_euler();
+      // integrate_implicit_backward_euler_pcg_filtered();
     }
   };
 
@@ -295,7 +307,10 @@ class ClothSimulatorBaraffWitkin {
     }
   }
 
-  void initialize_triangle_attributes(const Mesh &mesh)
+  void initialize_triangle_attributes(const Mesh &mesh,
+                                      float stretch_stiffness_value,
+                                      float shear_stiffness_value,
+                                      float bending_stiffness_value)
   {
     /* TODO set vertex mass based on Voronoi area of vertex. I read this in a paper somewhere but
      * can't find it. */
@@ -453,7 +468,7 @@ class ClothSimulatorBaraffWitkin {
 
     if (enable_bending) {
       for (int bending_index : IndexRange(bending_vertex_indices.size())) {
-        calculate_bend_choi(bending_index);
+        calculate_bend_blender(bending_index);
       }
     }
   }
@@ -595,17 +610,9 @@ class ClothSimulatorBaraffWitkin {
     float ku = triangle_stretch_stiffness_u[ti];
     float kv = triangle_stretch_stiffness_v[ti];
 
-    /* Disables compression response. */
-    // if (wu_norm < 1.0) {
-    //   ku = 0.0f;
-    // }
-    // if (wv_norm < 1.0) {
-    //   kv = 0.0f;
-    // }
-
     /* Temporary values. */
-    float kdu = ku * 0.01f;
-    float kdv = kv * 0.01f;
+    float kdu = ku * stretch_damping_factor;
+    float kdv = kv * stretch_damping_factor;
 
     Array<float3> dCu_dx = Array<float3>(3);
     Array<float3> dCv_dx = Array<float3>(3);
@@ -683,7 +690,7 @@ class ClothSimulatorBaraffWitkin {
     float3 dwv_dx = triangle_wv_derivatives[ti];
 
     float k = triangle_shear_stiffness[ti];
-    float kd = k * 0.1f;
+    float kd = k * shear_damping_factor;
 
     Array<float3> dC_dx = Array<float3>(3);
     float C_dot = 0.0f;
@@ -734,148 +741,56 @@ class ClothSimulatorBaraffWitkin {
     }
   }
 
-  // float bending_force_magnitude_choi(float length, float rest_length)
-  // {
-  //   float x = length / rest_length;
-  //   /* Below is a fifth order polynomial that approximates the sinc(x) function (Taylor series).
-  //    * It's not explicitly given in the original paper, but can be found on paga 17 here:
-  //    * https://www.iam.ubc.ca/wp-content/uploads/2018/10/EBoxerman_MSc_Thesis-3.pdf
-  //    */
-  //   float xx = x * x;
-  //   float xxx = xx * x;
-  //   float xxxx = xxx * x;
-  //   return (-11.541f * xxxx + 34.193f * xxx - 39.083f * xx + 23.116f * x - 9.713f);
-  // }
-
-  // void calculate_bend_choi(int bending_index)
-  // {
-  //   float k = bending_stiffness[bending_index];
-  //   int4 vertex_indices = bending_vertex_indices[bending_index];
-  //   float rest_length = bending_rest_lengths[bending_index];
-
-  //   float3 x1 = vertex_positions[vertex_indices[1]];
-  //   float3 x2 = vertex_positions[vertex_indices[2]];
-
-  //   float3 direction = x2 - x1;
-  //   float length = direction.normalize_and_get_length();
-
-  //   if (length >= rest_length) {
-  //     return;
-  //   }
-
-  //   float c = k;  // Still have figure out what this c is
-
-  //   float force_magnitude = k * bending_force_magnitude_choi(length, rest_length);
-  //   float force_magnitude2 = c * (length - rest_length);
-
-  //   force_magnitude = std::max(force_magnitude, force_magnitude2);
-
-  //   float3 force = force_magnitude * direction;
-
-  //   int i = vertex_indices[1];
-  //   int j = vertex_indices[2];
-
-  //   vertex_forces[i] += force;
-  //   vertex_forces[j] -= force;
-  // }
-
-  BLI_INLINE float fb(float length, float L)
-  {
-    float x = length / L;
-    float xx = x * x;
-    float xxx = xx * x;
-    float xxxx = xxx * x;
-    return (-11.541f * xxxx + 34.193f * xxx - 39.083f * xx + 23.116f * x - 9.713f);
-  }
-
-  BLI_INLINE float fbderiv(float length, float L)
-  {
-    float x = length / L;
-    float xx = x * x;
-    float xxx = xx * x;
-    return (-46.164f * xxx + 102.579f * xx - 78.166f * x + 23.116f);
-  }
-
-  BLI_INLINE float fbstar(float length, float L, float kb, float cb)
-  {
-    float tempfb_fl = kb * fb(length, L);
-    float fbstar_fl = cb * (length - L);
-
-    if (tempfb_fl < fbstar_fl) {
-      return fbstar_fl;
-    }
-
-    return tempfb_fl;
-  }
-
-  BLI_INLINE float fbstar_jacobi(float length, float L, float kb, float cb)
-  {
-    float tempfb_fl = kb * fb(length, L);
-    float fbstar_fl = cb * (length - L);
-
-    if (tempfb_fl < fbstar_fl) {
-      return -cb;
-    }
-
-    return -kb * fbderiv(length, L);
-  }
-
-  void calculate_bend_choi(int bending_index)
+  void calculate_bend_blender(int bending_index)
   {
     float k = bending_stiffness[bending_index];
-    int4 vertex_indices = bending_vertex_indices[bending_index];
-    float rest_length = bending_rest_lengths[bending_index];
 
+    int4 vertex_indices = bending_vertex_indices[bending_index];
     float3 x0 = vertex_positions[vertex_indices[0]];
+    float3 x1 = vertex_positions[vertex_indices[1]];
+    float3 x2 = vertex_positions[vertex_indices[2]];
     float3 x3 = vertex_positions[vertex_indices[3]];
 
-    float3 direction = x3 - x0;
-    float length = direction.normalize_and_get_length();
+    float3 e = x1 - x2;
+    float3 nA = float3::cross(x2 - x0, x1 - x0);
+    float3 nB = float3::cross(x1 - x3, x2 - x3);
 
-    if (length >= rest_length) {
-      return;
-    }
+    float e_norm = e.normalize_and_get_length();
+    float nA_norm = nA.normalize_and_get_length();
+    float nB_norm = nB.normalize_and_get_length();
 
-    float c = k;  // Still have figure out what this c is
+    float cos = float3::dot(nA, nB);
+    float sin = float3::dot(float3::cross(nA, nB), e);
 
-    float force_magnitude = fbstar(length, rest_length, k, c);
-    // float force_magnitude = k * (length - rest_length);
-    float3 force = force_magnitude * direction;
+    float angle = atan2f(sin, cos);
 
-    int i = vertex_indices[0];
-    int j = vertex_indices[3];
+    float force_magnitude = k * angle;
 
-    std::cout << std::endl;
-    std::cout << "Bending spring between " << i << " and " << j << std::endl;
-    std::cout << "rest_length " << rest_length << std::endl;
-    std::cout << "stiffness " << k << std::endl;
-    std::cout << "direction " << direction << std::endl;
-    std::cout << "force magnitude " << force_magnitude << std::endl;
+    float3 forceA = force_magnitude * nA;
+    float3 forceB = force_magnitude * nB;
 
-    vertex_forces[i] += force;
-    vertex_forces[j] -= force;
+    vertex_forces[vertex_indices[0]] += forceA;
+    vertex_forces[vertex_indices[3]] += forceB;
 
-    float3x3 dfdx = -fbstar_jacobi(length, rest_length, k, c) *
-                    float3x3::outer(direction, direction); // boxerman divides this by the dotproduct
+    float3 force_avg = 0.5 * (forceA + forceB);
 
-    vertex_force_derivatives.add(i, j, dfdx);
-    vertex_force_derivatives.add(j, i, dfdx);
+    vertex_forces[vertex_indices[1]] -= force_avg;
+    vertex_forces[vertex_indices[2]] -= force_avg;
 
-    const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
-    const float red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+    // const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
 
-    if (current_substep == n_substeps - 1) {
-      DRW_debug_line_v3v3(x0, x3, green);
-
-      DRW_debug_line_v3v3(x0, x0 + force, red);
-      DRW_debug_line_v3v3(x3, x3 - force, red);
-    }
+    // if (current_substep == n_substeps - 1) {
+    //   DRW_debug_line_v3v3(x0, x0 + forceA, green);
+    //   DRW_debug_line_v3v3(x3, x3 + forceB, green);
+    //   DRW_debug_line_v3v3(x1, x1 - force_avg, green);
+    //   DRW_debug_line_v3v3(x2, x2 - force_avg, green);
+    // }
   }
 
   void calculate_bend(int bending_index)
   {
     float k = bending_stiffness[bending_index];
-    float kd = k * 0.01f;
+    float kd = k * bending_damping_factor;
 
     int4 vertex_indices = bending_vertex_indices[bending_index];
     float3 x0 = vertex_positions[vertex_indices[0]];
@@ -948,59 +863,62 @@ class ClothSimulatorBaraffWitkin {
 
     /* Force derivatives */
 
-    float3x3 dC_dx_mn[4][4];
+    // float3x3 dC_dx_mn[4][4];
 
-    for (int m : IndexRange(4)) {
-      for (int n : IndexRange(4)) {
-        for (int s : IndexRange(3)) {
-          for (int t : IndexRange(3)) {
+    // for (int m : IndexRange(4)) {
+    //   for (int n : IndexRange(4)) {
+    //     for (int s : IndexRange(3)) {
+    //       for (int t : IndexRange(3)) {
 
-            /* TODO think over whether s and t might need to be swapped. */
+    //         /* TODO think over whether s and t might need to be swapped. */
 
-            float3 dnA_dx_mnst = normalA_second_derivatives[m][n][s][t] / nA_norm;
-            float3 dnB_dx_mnst = normalA_second_derivatives[m][n][s][t] / nB_norm;
+    //         float3 dnA_dx_mnst = normalA_second_derivatives[m][n][s][t] / nA_norm;
+    //         float3 dnB_dx_mnst = normalA_second_derivatives[m][n][s][t] / nB_norm;
 
-            float3 dnA_dx_ms = dnA_dx[m][s];
-            float3 dnA_dx_nt = dnA_dx[n][t];
-            float3 dnB_dx_ms = dnB_dx[m][s];
-            float3 dnB_dx_nt = dnB_dx[n][t];
+    //         float3 dnA_dx_ms = dnA_dx[m][s];
+    //         float3 dnA_dx_nt = dnA_dx[n][t];
+    //         float3 dnB_dx_ms = dnB_dx[m][s];
+    //         float3 dnB_dx_nt = dnB_dx[n][t];
 
-            float dcos_dx_mnst = float3::dot(dnA_dx_mnst, nB) + float3::dot(dnB_dx_nt, dnA_dx_ms) +
-                                 float3::dot(dnA_dx_nt, dnB_dx_ms) + float3::dot(nA, dnB_dx_mnst);
+    //         float dcos_dx_mnst = float3::dot(dnA_dx_mnst, nB) + float3::dot(dnB_dx_nt,
+    //         dnA_dx_ms) +
+    //                              float3::dot(dnA_dx_nt, dnB_dx_ms) + float3::dot(nA,
+    //                              dnB_dx_mnst);
 
-            float dsin_dx_mnst =
-                float3::dot(float3::cross(dnA_dx_mnst, nB) + float3::cross(dnA_dx_ms, dnB_dx_nt) +
-                                float3::cross(dnA_dx_nt, dnB_dx_ms) +
-                                float3::cross(nA, dnB_dx_mnst),
-                            e) +
-                float3::dot(float3::cross(dnA_dx_ms, nB) + float3::cross(nA, dnB_dx_ms),
-                            de_dx[n][t]) +
-                float3::dot(float3::cross(dnA_dx_nt, nB) + float3::cross(nA, dnB_dx_nt),
-                            de_dx[m][s]);
+    //         float dsin_dx_mnst =
+    //             float3::dot(float3::cross(dnA_dx_mnst, nB) + float3::cross(dnA_dx_ms, dnB_dx_nt)
+    //             +
+    //                             float3::cross(dnA_dx_nt, dnB_dx_ms) +
+    //                             float3::cross(nA, dnB_dx_mnst),
+    //                         e) +
+    //             float3::dot(float3::cross(dnA_dx_ms, nB) + float3::cross(nA, dnB_dx_ms),
+    //                         de_dx[n][t]) +
+    //             float3::dot(float3::cross(dnA_dx_nt, nB) + float3::cross(nA, dnB_dx_nt),
+    //                         de_dx[m][s]);
 
-            /* t ans s are swapped here due to the column wise storage of small matrices in
-             * blender. */
-            dC_dx_mn[m][n].values[t][s] = dcos_dx[n][t] * dsin_dx[m][s] + cos * dsin_dx_mnst -
-                                          dsin_dx[n][t] * dcos_dx[m][s] - sin * dcos_dx_mnst;
-          }
-        }
+    //         /* t ans s are swapped here due to the column wise storage of small matrices in
+    //          * blender. */
+    //         dC_dx_mn[m][n].values[t][s] = dcos_dx[n][t] * dsin_dx[m][s] + cos * dsin_dx_mnst -
+    //                                       dsin_dx[n][t] * dcos_dx[m][s] - sin * dcos_dx_mnst;
+    //       }
+    //     }
 
-        float3x3 dC_outer = float3x3::outer(dC_dx[m], dC_dx[n]);
-        float3x3 df_dx_mn = -k * (dC_outer + dC_dx_mn[m][n] * C);
+    //     float3x3 dC_outer = float3x3::outer(dC_dx[m], dC_dx[n]);
+    //     float3x3 df_dx_mn = -k * (dC_outer + dC_dx_mn[m][n] * C);
 
-        int i = vertex_indices[m];
-        int j = vertex_indices[n];
-        vertex_force_derivatives.add(i, j, df_dx_mn);
+    //     int i = vertex_indices[m];
+    //     int j = vertex_indices[n];
+    //     vertex_force_derivatives.add(i, j, df_dx_mn);
 
-        if (damp_bending) {
-          float3x3 dd_dx_mn = -kd * C_dot * dC_dx_mn[m][n];
-          vertex_force_derivatives.add(i, j, dd_dx_mn);
+    //     if (damp_bending) {
+    //       float3x3 dd_dx_mn = -kd * C_dot * dC_dx_mn[m][n];
+    //       vertex_force_derivatives.add(i, j, dd_dx_mn);
 
-          float3x3 dd_dv_nm = -kd * dC_outer;
-          vertex_force_velocity_derivatives.add(i, j, dd_dv_nm);
-        }
-      }
-    }
+    //       float3x3 dd_dv_nm = -kd * dC_outer;
+    //       vertex_force_velocity_derivatives.add(i, j, dd_dv_nm);
+    //     }
+    //   }
+    // }
   }
 
   void calculate_kinematic_collisions()

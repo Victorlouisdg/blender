@@ -51,6 +51,20 @@
 
 using blender::Span;
 
+static void initData(ModifierData *modifier_data)
+{
+  std::cout << "initializing Cloth BW data" << std::endl;
+  ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
+  cbw_modifier_data->n_substeps = 10;
+  cbw_modifier_data->stretch_stiffness = 20000.0f;
+  cbw_modifier_data->shear_stiffness = 1000.0f;
+  cbw_modifier_data->bending_stiffness = 1.0f;
+
+  cbw_modifier_data->stretch_damping_factor = 0.01f;
+  cbw_modifier_data->shear_damping_factor = 0.01f;
+  cbw_modifier_data->bending_damping_factor = 0.01f;
+}
+
 static void freeData(ModifierData *modifier_data)
 {
   std::cout << "freeing Cloth BW data" << std::endl;
@@ -90,6 +104,12 @@ static void panel_draw(const bContext *UNUSED(C), Panel *panel)
     uiLayout *col = uiLayoutColumn(layout, false);
     uiItemR(col, ptr, "collision_object", 0, nullptr, ICON_NONE);
     modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", NULL, NULL);
+    uiItemR(layout, ptr, "stretch_stiffness", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "shear_stiffness", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "bending_stiffness", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "stretch_damping_factor", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "shear_damping_factor", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "bending_damping_factor", 0, NULL, ICON_NONE);
   }
   modifier_panel_end(layout, ptr);
 }
@@ -116,7 +136,14 @@ static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *
 
   /* Currently added the modifier on a frame the is not 1 results in a crash because of this. */
   if (framenr == 1) {
-    simulator->initialize(*mesh);
+    simulator->initialize(*mesh,
+                          cbw_modifier_data->stretch_stiffness,
+                          cbw_modifier_data->shear_stiffness,
+                          cbw_modifier_data->bending_stiffness,
+                          cbw_modifier_data->stretch_damping_factor,
+                          cbw_modifier_data->shear_damping_factor,
+                          cbw_modifier_data->bending_damping_factor,
+                          cbw_modifier_data->n_substeps);
 
     Object *collision_object = cbw_modifier_data->collision_object;
     if (collision_object) {
@@ -173,7 +200,7 @@ ModifierTypeInfo modifierType_ClothBW = {
     /* modifyHair */ nullptr,
     /* modifyGeometrySet */ nullptr,
 
-    /* initData */ nullptr,
+    /* initData */ initData,
     /* requiredDataMask */ nullptr,
     /* freeData */ freeData,
     /* isDisabled */ nullptr,
