@@ -261,11 +261,11 @@ class ClothSimulatorBaraffWitkin {
       current_substep = substep;
       reset_forces_and_derivatives();
 
-      // calculate_kinematic_collisions();
+      calculate_kinematic_collisions();
       calculate_forces_and_derivatives();
 
-      integrate_explicit_forward_euler();
-      // integrate_implicit_backward_euler_pcg_filtered();
+      // integrate_explicit_forward_euler();
+      integrate_implicit_backward_euler_pcg_filtered();
     }
   };
 
