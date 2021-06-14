@@ -20,6 +20,8 @@
 #include "BLI_index_range.hh"
 #include "BLI_math_matrix.h"
 
+#include <eigen3/Eigen/Dense>
+
 namespace blender {
 
 struct float3x3 {
@@ -159,24 +161,41 @@ struct float3x3 {
   {
     return float3(values[0][row_index], values[1][row_index], values[2][row_index]);
   }
+
+  Eigen::MatrixXd to_eigen() const
+  {
+    Eigen::MatrixXd eigen_matrix(3, 3);
+    for (int i : IndexRange(3)) {
+      for (int j : IndexRange(3)) {
+        eigen_matrix(i, j) = values[j][i];
+      }
+    }
+    return eigen_matrix;
+  }
+
+  Eigen::VectorXcd eigenvalues() const
+  {
+    Eigen::MatrixXd eigen_matrix = to_eigen();
+    return eigen_matrix.eigenvalues();
+  }
 };
 
-// std::ostream &operator<<(std::ostream &os, float3x3 const &m)
-// {
-//   /* Prints [[row0], [row1], [row2]]. */
-//   os << "[";
-//   for (int i : IndexRange(3)) {
-//     os << "[";
-//     for (int j : IndexRange(3)) {
-//       os << m.values[j][i];
-//       if (j != 2) {
-//         os << ", ";
-//       }
-//     }
-//     os << "]";
-//   }
-//   os << "]";
-//   return os;
-// };
+std::ostream &operator<<(std::ostream &os, float3x3 const &m)
+{
+  /* Prints [[row0], [row1], [row2]]. */
+  os << "[";
+  for (int i : IndexRange(3)) {
+    os << "[";
+    for (int j : IndexRange(3)) {
+      os << m.values[j][i];
+      if (j != 2) {
+        os << ", ";
+      }
+    }
+    os << "]";
+  }
+  os << "]";
+  return os;
+};
 
 }  // namespace blender

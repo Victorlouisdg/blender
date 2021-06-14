@@ -2358,10 +2358,20 @@ typedef struct ClothBWModifierData {
   float stretch_stiffness;
   float shear_stiffness;
   float bending_stiffness;
+  float spring_stiffness;
 
   float stretch_damping_factor;
   float shear_damping_factor;
   float bending_damping_factor;
+
+  short enable_shear;
+  short enable_bending;
+
+  short damp_stretch;
+  short damp_shear;
+  short damp_bending;
+
+  short use_explicit_integration;
 
   void *simulator_object;
 

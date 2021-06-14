@@ -7248,8 +7248,7 @@ static void rna_def_modifier_clothbw(BlenderRNA *brna)
   RNA_def_property_int_sdna(prop, NULL, "n_substeps");
   RNA_def_property_range(prop, 1, 10000);
   RNA_def_property_ui_range(prop, 1, 100, 5, -1);
-  RNA_def_property_ui_text(
-      prop, "Substeps", "");
+  RNA_def_property_ui_text(prop, "Substeps", "");
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 
   prop = RNA_def_property(srna, "stretch_stiffness", PROP_FLOAT, PROP_NONE);
@@ -7270,6 +7269,12 @@ static void rna_def_modifier_clothbw(BlenderRNA *brna)
   RNA_def_property_ui_range(prop, 0.0, FLT_MAX, 100.0, 4);
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 
+  prop = RNA_def_property(srna, "spring_stiffness", PROP_FLOAT, PROP_NONE);
+  RNA_def_property_ui_text(prop, "Spring Stiffness", "");
+  RNA_def_property_range(prop, 0.0, FLT_MAX);
+  RNA_def_property_ui_range(prop, 0.0, FLT_MAX, 100.0, 4);
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
   prop = RNA_def_property(srna, "stretch_damping_factor", PROP_FLOAT, PROP_NONE);
   RNA_def_property_ui_text(prop, "Stretch Damping Factor", "");
   RNA_def_property_range(prop, 0.0, FLT_MAX);
@@ -7286,6 +7291,36 @@ static void rna_def_modifier_clothbw(BlenderRNA *brna)
   RNA_def_property_ui_text(prop, "Bending Damping Factor", "");
   RNA_def_property_range(prop, 0.0, FLT_MAX);
   RNA_def_property_ui_range(prop, 0.0, FLT_MAX, 100.0, 4);
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "enable_shear", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, NULL, "enable_shear", 1);
+  RNA_def_property_ui_text(prop, "Enable Shear", "");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "enable_bending", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, NULL, "enable_bending", 1);
+  RNA_def_property_ui_text(prop, "Enable Bending", "");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "damp_stretch", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, NULL, "damp_stretch", 1);
+  RNA_def_property_ui_text(prop, "Damp Stretch", "");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "damp_shear", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, NULL, "damp_shear", 1);
+  RNA_def_property_ui_text(prop, "Damp Shear", "");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "damp_bending", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, NULL, "damp_bending", 1);
+  RNA_def_property_ui_text(prop, "Damp Bending", "");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "use_explicit_integration", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, NULL, "use_explicit_integration", 1);
+  RNA_def_property_ui_text(prop, "Use Explicit Integration", "");
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 
   RNA_define_lib_overridable(false);

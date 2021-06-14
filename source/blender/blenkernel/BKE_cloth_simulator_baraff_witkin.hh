@@ -73,12 +73,14 @@ static Span<MLoopTri> get_mesh_looptris(const Mesh &mesh)
  */
 class ClothSimulatorBaraffWitkin {
  public:
-  const bool enable_shear = true;
-  const bool enable_bending = true;
+  bool enable_shear;
+  bool enable_bending;
 
-  const bool damp_stretch = true;
-  const bool damp_shear = true;
-  const bool damp_bending = true;
+  bool damp_stretch;
+  bool damp_shear;
+  bool damp_bending;
+
+  bool use_explicit_integration;
 
   float stretch_damping_factor;
   float shear_damping_factor;
@@ -168,7 +170,13 @@ class ClothSimulatorBaraffWitkin {
                   float bending_stiffness_value,
                   float stretch_damping_factor,
                   float shear_damping_factor,
-                  float bending_damping_factor)
+                  float bending_damping_factor,
+                  bool enable_shear,
+                  bool enable_bending,
+                  bool damp_stretch,
+                  bool damp_shear,
+                  bool damp_bending,
+                  bool use_explicit_integration)
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
 
@@ -181,6 +189,13 @@ class ClothSimulatorBaraffWitkin {
     this->stretch_damping_factor = stretch_damping_factor;
     this->shear_damping_factor = shear_damping_factor;
     this->bending_damping_factor = bending_damping_factor;
+
+    this->enable_shear = enable_shear;
+    this->enable_bending = enable_bending;
+    this->damp_stretch = damp_stretch;
+    this->damp_shear = damp_shear;
+    this->damp_bending = damp_bending;
+    this->use_explicit_integration = use_explicit_integration;
 
     initialize_vertex_attributes(mesh);
     initialize_triangle_attributes(
@@ -261,11 +276,15 @@ class ClothSimulatorBaraffWitkin {
       current_substep = substep;
       reset_forces_and_derivatives();
 
-      calculate_kinematic_collisions();
+      // calculate_kinematic_collisions();
       calculate_forces_and_derivatives();
 
-      // integrate_explicit_forward_euler();
-      integrate_implicit_backward_euler_pcg_filtered();
+      if (use_explicit_integration) {
+        integrate_explicit_forward_euler();
+      }
+      else {
+        integrate_implicit_backward_euler_pcg_filtered();
+      }
     }
   };
 
@@ -471,6 +490,53 @@ class ClothSimulatorBaraffWitkin {
         calculate_bend_blender(bending_index);
       }
     }
+
+    /* Regular 1-dimensional spring. */
+    // float3 x0 = vertex_positions[0];
+    // float3 x1 = vertex_positions[1];
+    // float rest_length = 0.9f;
+
+    // float3 spring = x1 - x0; /* Points towards x1 */
+    // float length = spring.normalize_and_get_length();
+
+    // float extension = length - rest_length; /* Positive if spring is stretched. */
+    // // float k = 1000000.0f;
+    // // explicit stable at 100k for test file.
+    // float k = 1000000.0f;
+
+    // float3 force = k * extension * spring;
+
+    // vertex_forces[0] += force;
+    // vertex_forces[1] -= force;
+
+    // std::cout << "force: " << force << std::endl;
+
+    // float3x3 force_derivative = -k * float3x3::outer(spring, spring);
+
+    // std::cout << "force_derivative: " << force_derivative << std::endl;
+
+    // Eigen::MatrixXd eigen_matrix(3, 3);
+    // for (int i : IndexRange(3)) {
+    //   for (int j : IndexRange(3)) {
+    //     eigen_matrix(i, j) = force_derivative.values[j][i];
+    //   }
+    // }
+
+    // Eigen::VectorXcd eivals = eigen_matrix.eigenvalues();
+    // std::cout << "The eigenvalues are:" << std::endl << eivals << std::endl;
+
+    // vertex_force_derivatives.add(0, 1, force_derivative);
+    // vertex_force_derivatives.add(1, 0, force_derivative);
+
+    // const float cyan[4] = {0.0f, 1.0f, 1.0f, 1.0f};
+    // const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+    // const float yellow[4] = {1.0f, 1.0f, 0.0f, 1.0f};
+
+    // if (current_substep == n_substeps - 1) {
+    //   DRW_debug_line_v3v3(x0, x1, cyan);
+    //   DRW_debug_line_v3v3(x0, x0 + force, green);
+    //   DRW_debug_line_v3v3(x1, x1 - force, yellow);
+    // }
   }
 
   void integrate_explicit_forward_euler()
@@ -663,6 +729,10 @@ class ClothSimulatorBaraffWitkin {
         int i = vertex_indices[m];
         int j = vertex_indices[n];
         vertex_force_derivatives.add(i, j, dfu_dx_mn + dfv_dx_mn);
+
+        std::cout << std::endl << "Stretch eigenvalues: " << std::endl;
+        std::cout << dfu_dx_mn.eigenvalues() << std::endl;
+        std::cout << dfv_dx_mn.eigenvalues() << std::endl;
 
         if (damp_stretch) {
           float3x3 ddu_dx_mn = -kdu * Cu_dot * dCu_dx_mn;

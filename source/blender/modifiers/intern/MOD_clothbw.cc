@@ -63,6 +63,13 @@ static void initData(ModifierData *modifier_data)
   cbw_modifier_data->stretch_damping_factor = 0.01f;
   cbw_modifier_data->shear_damping_factor = 0.01f;
   cbw_modifier_data->bending_damping_factor = 0.01f;
+
+  cbw_modifier_data->enable_shear = true;
+  cbw_modifier_data->enable_bending = true;
+  cbw_modifier_data->damp_stretch = true;
+  cbw_modifier_data->damp_shear = true;
+  cbw_modifier_data->damp_bending = true;
+  cbw_modifier_data->use_explicit_integration = false;
 }
 
 static void freeData(ModifierData *modifier_data)
@@ -111,6 +118,13 @@ static void panel_draw(const bContext *UNUSED(C), Panel *panel)
     uiItemR(layout, ptr, "stretch_damping_factor", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "shear_damping_factor", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "bending_damping_factor", 0, NULL, ICON_NONE);
+
+    uiItemR(layout, ptr, "enable_shear", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "enable_bending", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "damp_stretch", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "damp_shear", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "damp_bending", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "use_explicit_integration", 0, NULL, ICON_NONE);
   }
   modifier_panel_end(layout, ptr);
 }
@@ -144,7 +158,13 @@ static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *
                           cbw_modifier_data->bending_stiffness,
                           cbw_modifier_data->stretch_damping_factor,
                           cbw_modifier_data->shear_damping_factor,
-                          cbw_modifier_data->bending_damping_factor);
+                          cbw_modifier_data->bending_damping_factor,
+                          cbw_modifier_data->enable_shear,
+                          cbw_modifier_data->enable_bending,
+                          cbw_modifier_data->damp_stretch,
+                          cbw_modifier_data->damp_shear,
+                          cbw_modifier_data->damp_bending,
+                          cbw_modifier_data->use_explicit_integration);
 
     Object *collision_object = cbw_modifier_data->collision_object;
     if (collision_object) {
