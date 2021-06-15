@@ -19,6 +19,8 @@
  */
 
 #include "BKE_cloth_simulator_baraff_witkin.hh"
+// #include "BKE_cloth_simulator_bw_eigen.hh"
+
 #include "BKE_deform.h"
 #include "BKE_lib_query.h"
 #include "BKE_mesh.h"
@@ -69,7 +71,7 @@ static void initData(ModifierData *modifier_data)
   cbw_modifier_data->damp_stretch = true;
   cbw_modifier_data->damp_shear = true;
   cbw_modifier_data->damp_bending = true;
-  cbw_modifier_data->use_explicit_integration = false;
+  cbw_modifier_data->use_explicit_integration = true;
 }
 
 static void freeData(ModifierData *modifier_data)
@@ -141,6 +143,7 @@ static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *
 
   if (!cbw_modifier_data->simulator_object) {
     cbw_modifier_data->simulator_object = new ClothSimulatorBaraffWitkin();
+    // cbw_modifier_data->simulator_object = new ClothSimulatorBWEigen();
   }
 
   ClothSimulatorBaraffWitkin *simulator = reinterpret_cast<ClothSimulatorBaraffWitkin *>(
@@ -165,11 +168,13 @@ static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *
                           cbw_modifier_data->damp_shear,
                           cbw_modifier_data->damp_bending,
                           cbw_modifier_data->use_explicit_integration);
+    // simulator->initialize(
+    //     *mesh, cbw_modifier_data->n_substeps, cbw_modifier_data->use_explicit_integration);
 
     Object *collision_object = cbw_modifier_data->collision_object;
     if (collision_object) {
       Mesh *collision_mesh = BKE_object_get_pre_modified_mesh(collision_object);
-      simulator->set_collision_mesh(*collision_mesh);
+      // simulator->set_collision_mesh(*collision_mesh);
     }
     return mesh;
   }
@@ -197,6 +202,10 @@ static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *
     mesh->mvert[i].co[0] = simulator->vertex_positions[i][0];
     mesh->mvert[i].co[1] = simulator->vertex_positions[i][1];
     mesh->mvert[i].co[2] = simulator->vertex_positions[i][2];
+
+    // mesh->mvert[i].co[0] = simulator->vertex_positions[3 * i];
+    // mesh->mvert[i].co[1] = simulator->vertex_positions[3 * i + 1];
+    // mesh->mvert[i].co[2] = simulator->vertex_positions[3 * i + 2];
   }
 
   return mesh;

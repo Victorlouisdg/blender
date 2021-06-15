@@ -582,9 +582,13 @@ class ClothSimulatorBaraffWitkin {
     A.multiply_float(h * h);
     dfdv.multiply_float(h);
     A.add_matrix(dfdv);
+
+    /* A = M - A */
+    A.multiply_float(-1.0f);
     for (int i : IndexRange(A.n_rows)) {
       float3x3 mass_matrix = float3x3::diagonal(vertex_masses[i]);
-      A.insert(i, i, mass_matrix - A.get(i, i));
+      /* TODO check if other parts of A must be inverted? */
+      A.insert(i, i, mass_matrix + A.get(i, i));
     }
 
     /* Solving the system. */
@@ -730,9 +734,9 @@ class ClothSimulatorBaraffWitkin {
         int j = vertex_indices[n];
         vertex_force_derivatives.add(i, j, dfu_dx_mn + dfv_dx_mn);
 
-        std::cout << std::endl << "Stretch eigenvalues: " << std::endl;
-        std::cout << dfu_dx_mn.eigenvalues() << std::endl;
-        std::cout << dfv_dx_mn.eigenvalues() << std::endl;
+        // std::cout << std::endl << "Stretch eigenvalues: " << std::endl;
+        // std::cout << dfu_dx_mn.eigenvalues() << std::endl;
+        // std::cout << dfv_dx_mn.eigenvalues() << std::endl;
 
         if (damp_stretch) {
           float3x3 ddu_dx_mn = -kdu * Cu_dot * dCu_dx_mn;
