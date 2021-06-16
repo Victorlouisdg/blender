@@ -57,21 +57,21 @@ static void initData(ModifierData *modifier_data)
 {
   std::cout << "initializing Cloth BW data" << std::endl;
   ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
-  cbw_modifier_data->n_substeps = 20;
+  cbw_modifier_data->n_substeps = 1;
   cbw_modifier_data->stretch_stiffness = 20000.0f;
   cbw_modifier_data->shear_stiffness = 1000.0f;
-  cbw_modifier_data->bending_stiffness = 1.0f;
+  cbw_modifier_data->bending_stiffness = 0.01f;
 
   cbw_modifier_data->stretch_damping_factor = 0.01f;
   cbw_modifier_data->shear_damping_factor = 0.01f;
-  cbw_modifier_data->bending_damping_factor = 0.01f;
+  cbw_modifier_data->bending_damping_factor = 0.1f;
 
   cbw_modifier_data->enable_shear = true;
   cbw_modifier_data->enable_bending = true;
   cbw_modifier_data->damp_stretch = true;
   cbw_modifier_data->damp_shear = true;
   cbw_modifier_data->damp_bending = true;
-  cbw_modifier_data->use_explicit_integration = true;
+  cbw_modifier_data->use_explicit_integration = false;
 }
 
 static void freeData(ModifierData *modifier_data)
@@ -174,7 +174,7 @@ static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *
     Object *collision_object = cbw_modifier_data->collision_object;
     if (collision_object) {
       Mesh *collision_mesh = BKE_object_get_pre_modified_mesh(collision_object);
-      // simulator->set_collision_mesh(*collision_mesh);
+      simulator->set_collision_mesh(*collision_mesh);
     }
     return mesh;
   }

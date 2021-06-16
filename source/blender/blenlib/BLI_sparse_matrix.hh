@@ -204,7 +204,7 @@ class ConjugateGradientSolver {
 
  public:
   int n;
-  int max_iterations = 100;    /* If this is reached, something is probably wrong. */
+  int max_iterations = 1000;    /* If this is reached, something is probably wrong. */
   float tolerance = 0.000001f; /* Not sure what tolerance is good enough. */
 
   Array<float3> r;
