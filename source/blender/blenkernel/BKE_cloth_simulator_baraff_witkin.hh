@@ -531,56 +531,27 @@ class ClothSimulatorBaraffWitkin {
 
     float3 force = spring_force(x0, x1, k, rest_length);
 
-    float h = 0.000001f;
-    std::cout << "Finite diff jacobian: ";
-    for (int m : IndexRange(3)) {
-      float3 delta = float3(0.0f);
-      delta[m] += h;
-      float3 x0_h = x0 + delta;
-      float3 force_h = spring_force(x0_h, x1, k, rest_length);
-      float3 finite_diff = (force_h - force) / h;
-      std::cout << finite_diff;
-    }
-    std::cout << std::endl;
+    // float h = 0.000001f;
+    // std::cout << "Finite diff jacobian: ";
+    // for (int m : IndexRange(3)) {
+    //   float3 delta = float3(0.0f);
+    //   delta[m] += h;
+    //   float3 x0_h = x0 + delta;
+    //   float3 force_h = spring_force(x0_h, x1, k, rest_length);
+    //   float3 finite_diff = (force_h - force) / h;
+    //   std::cout << finite_diff;
+    // }
+    // std::cout << std::endl;
 
-    std::cout << "Analytic Jacobian: ";
     float3x3 force_derivative = spring_force_jacobian(x0, x1, k, rest_length);
-    std::cout << force_derivative << std::endl << std::endl;
 
-    if (!spring_is_in_compression) {
-      vertex_forces[0] += force;
-      vertex_forces[1] -= force;
-    }
+    vertex_forces[0] += force;
+    vertex_forces[1] -= force;
 
-    // float3x3 force_derivative;
-
-    // if (spring_is_in_compression) {
-    //   force_derivative = float3x3(0.0f);
-    // }
-    // else {
-
-    // Eigen::MatrixXd eigen_matrix(3, 3);
-    // for (int i : IndexRange(3)) {
-    //   for (int j : IndexRange(3)) {
-    //     eigen_matrix(i, j) = force_derivative.values[j][i];
-    //   }
-    // }
-
-    // Eigen::VectorXcd eivals = eigen_matrix.eigenvalues();
-    // std::cout << "The eigenvalues are:" << std::endl << eivals << std::endl;
-
-    vertex_force_derivatives.add(0, 1, force_derivative);
-    vertex_force_derivatives.add(1, 0, force_derivative);
-
-    // const float cyan[4] = {0.0f, 1.0f, 1.0f, 1.0f};
-    // const float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
-    // const float yellow[4] = {1.0f, 1.0f, 0.0f, 1.0f};
-
-    // if (current_substep == n_substeps - 1) {
-    // DRW_debug_line_v3v3(x0, x1, cyan);
-    //   DRW_debug_line_v3v3(x0, x0 + force, green);
-    //   DRW_debug_line_v3v3(x1, x1 - force, yellow);
-    // }
+    vertex_force_derivatives.add(0, 0, force_derivative);
+    vertex_force_derivatives.add(1, 1, force_derivative);
+    vertex_force_derivatives.add(0, 1, -1.0f * force_derivative);
+    vertex_force_derivatives.add(1, 0, -1.0f * force_derivative);
   }
 
   void integrate_explicit_forward_euler()
