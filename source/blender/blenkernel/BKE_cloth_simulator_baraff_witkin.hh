@@ -5,6 +5,7 @@
 #include "BLI_float2x2.hh"
 #include "BLI_float3.hh"
 #include "BLI_float3x3.hh"
+#include "BLI_int2.hh"
 #include "BLI_int3.hh"
 #include "BLI_int4.hh"
 #include "BLI_sparse_matrix.hh"
@@ -20,6 +21,7 @@
 #include "BKE_mesh_runtime.h"
 
 #include <tuple>
+#include <unordered_set>
 
 extern "C" {
 #include "draw_debug.h"
@@ -46,6 +48,7 @@ using blender::float2x2;
 using blender::float3;
 using blender::float3x3;
 using blender::IndexRange;
+using blender::int2;
 using blender::int3;
 using blender::int4;
 using blender::Span;
@@ -79,12 +82,14 @@ class ClothSimulatorBaraffWitkin {
   bool damp_stretch;
   bool damp_shear;
   bool damp_bending;
+  bool damp_springs;
 
   bool use_explicit_integration;
 
   float stretch_damping_factor;
   float shear_damping_factor;
   float bending_damping_factor;
+  float spring_damping_factor;
 
   int n_vertices;
   int n_triangles;
@@ -103,6 +108,7 @@ class ClothSimulatorBaraffWitkin {
   Array<float3> vertex_velocities;
 
   /* Indices */
+  Array<int2> spring_vertex_indices;
   Array<int3> triangle_vertex_indices;
   Array<int4> bending_vertex_indices;
 
@@ -124,6 +130,10 @@ class ClothSimulatorBaraffWitkin {
 
   Array<float> triangle_areas_uv;
   Array<float3> edges_normals;
+
+  int n_springs;
+  Array<float> spring_rest_lengths;
+  Array<float> spring_stiffness;
 
   float density = 0.2f;            /* in kg/m^2 */
   float standard_gravity = -9.81f; /* in m/s^2 */
@@ -170,14 +180,17 @@ class ClothSimulatorBaraffWitkin {
                   float stretch_stiffness_value,
                   float shear_stiffness_value,
                   float bending_stiffness_value,
+                  float spring_stiffness_value,
                   float stretch_damping_factor,
                   float shear_damping_factor,
                   float bending_damping_factor,
+                  float spring_damping_factor,
                   bool enable_shear,
                   bool enable_bending,
                   bool damp_stretch,
                   bool damp_shear,
                   bool damp_bending,
+                  bool damp_springs,
                   bool use_explicit_integration)
   {
     std::cout << "Cloth simulation initialisation" << std::endl;
@@ -191,14 +204,17 @@ class ClothSimulatorBaraffWitkin {
     this->stretch_damping_factor = stretch_damping_factor;
     this->shear_damping_factor = shear_damping_factor;
     this->bending_damping_factor = bending_damping_factor;
+    this->spring_damping_factor = spring_damping_factor;
 
     this->enable_shear = enable_shear;
     this->enable_bending = enable_bending;
     this->damp_stretch = damp_stretch;
     this->damp_shear = damp_shear;
     this->damp_bending = damp_bending;
+    this->damp_springs = damp_springs;
     this->use_explicit_integration = use_explicit_integration;
 
+    /* TODO move this to "cloth_attribute_initialisation.cc" or something */
     initialize_vertex_attributes(mesh);
     initialize_triangle_attributes(
         mesh, stretch_stiffness_value, shear_stiffness_value, bending_stiffness_value);
@@ -211,6 +227,71 @@ class ClothSimulatorBaraffWitkin {
     pinned_vertices = Vector<int>();
 
     // verify_w_derivatives(); /* For debugging, could become a test. */
+
+    /* Finding all edges that are not an edge of a face. */
+    std::unordered_set<int> non_face_vertices = std::unordered_set<int>();
+
+    for (int i : IndexRange(n_vertices)) {
+      non_face_vertices.insert(i);
+    }
+
+    Span<MLoopTri> looptris = get_mesh_looptris(mesh);
+    for (const int looptri_index : looptris.index_range()) {
+      const MLoopTri &looptri = looptris[looptri_index];
+      const int v0_loop_index = looptri.tri[0];
+      const int v1_loop_index = looptri.tri[1];
+      const int v2_loop_index = looptri.tri[2];
+      const MLoop v0_loop = mesh.mloop[v0_loop_index];
+      const MLoop v1_loop = mesh.mloop[v1_loop_index];
+      const MLoop v2_loop = mesh.mloop[v2_loop_index];
+      const int v0_index = v0_loop.v;
+      const int v1_index = v1_loop.v;
+      const int v2_index = v2_loop.v;
+
+      /* TODO simplify. */
+      auto search0 = non_face_vertices.find(v0_index);
+      if (search0 != non_face_vertices.end()) {
+        non_face_vertices.erase(search0);
+      }
+      auto search1 = non_face_vertices.find(v1_index);
+      if (search1 != non_face_vertices.end()) {
+        non_face_vertices.erase(search1);
+      }
+      auto search2 = non_face_vertices.find(v2_index);
+      if (search2 != non_face_vertices.end()) {
+        non_face_vertices.erase(search2);
+      }
+    }
+
+    std::cout << "Non face vertices" << std::endl;
+    for (const int vertex_index : non_face_vertices) {
+      std::cout << vertex_index << std::endl;
+    }
+
+    Vector<int2> edges_not_in_any_face = Vector<int2>();
+
+    for (int i : IndexRange(mesh.totedge)) {
+      const MEdge &edge = mesh.medge[i];
+
+      if (non_face_vertices.find(edge.v1) != non_face_vertices.end() ||
+          non_face_vertices.find(edge.v2) != non_face_vertices.end()) {
+        edges_not_in_any_face.append(int2(edge.v1, edge.v2));
+      }
+    }
+
+    spring_vertex_indices = Array<int2>(edges_not_in_any_face.as_span());
+    n_springs = spring_vertex_indices.size();
+    spring_rest_lengths = Array<float>(n_springs);
+    spring_stiffness = Array<float>(n_springs);
+
+    for (int i : IndexRange(n_springs)) {
+      int2 spring = spring_vertex_indices[i];
+      float3 x0 = vertex_positions[spring.i];
+      float3 x1 = vertex_positions[spring.j];
+
+      spring_rest_lengths[i] = (x0 - x1).length();
+      spring_stiffness[i] = spring_stiffness_value;
+    }
   };
 
   void pin(int vertex_index)
@@ -475,31 +556,14 @@ class ClothSimulatorBaraffWitkin {
     bending_stiffness = Array<float>(n_bending_edges, bending_stiffness_value);
   };
 
-  float3 spring_force(float3 x0, float3 x1, float k, float rest_length)
-  {
-    float3 spring_direction = x1 - x0; /* Points towards x1 */
-    float length = spring_direction.normalize_and_get_length();
-
-    float3 force = k * (length - rest_length) * spring_direction;
-    return force;
-  }
-
-  float3x3 spring_force_jacobian(float3 x0, float3 x1, float k, float rest_length)
-  {
-    float3 spring_direction = x1 - x0; /* Points towards x1 */
-    float length = spring_direction.normalize_and_get_length();
-    float3x3 spring_outer = 1.0f / float3::dot(spring_direction, spring_direction) *
-                            float3x3::outer(spring_direction, spring_direction);
-
-    float3x3 force_derivative = -k * spring_outer - k * (1 - rest_length / length) *
-                                                        (float3x3::identity() - spring_outer);
-    return force_derivative;
-  }
-
   void calculate_forces_and_derivatives()
   {
     for (int vertex_index : IndexRange(n_vertices)) {
       calculate_gravity(vertex_index);
+    }
+
+    for (int spring_index : IndexRange(n_springs)) {
+      calculate_spring(spring_index);
     }
 
     for (int triangle_index : IndexRange(n_triangles)) {
@@ -515,43 +579,6 @@ class ClothSimulatorBaraffWitkin {
         calculate_bend(bending_index);
       }
     }
-
-    /* 1D spring experiment. */
-
-    /* Regular 1-dimensional spring. */
-    float3 x0 = vertex_positions[0];
-    float3 x1 = vertex_positions[1];
-
-    float rest_length = 1.0f;
-    float k = 10000.0f;
-
-    float3 spring_direction = x1 - x0; /* Points towards x1 */
-    float length = spring_direction.normalize_and_get_length();
-    bool spring_is_in_compression = length < rest_length;
-
-    float3 force = spring_force(x0, x1, k, rest_length);
-
-    // float h = 0.000001f;
-    // std::cout << "Finite diff jacobian: ";
-    // for (int m : IndexRange(3)) {
-    //   float3 delta = float3(0.0f);
-    //   delta[m] += h;
-    //   float3 x0_h = x0 + delta;
-    //   float3 force_h = spring_force(x0_h, x1, k, rest_length);
-    //   float3 finite_diff = (force_h - force) / h;
-    //   std::cout << finite_diff;
-    // }
-    // std::cout << std::endl;
-
-    float3x3 force_derivative = spring_force_jacobian(x0, x1, k, rest_length);
-
-    vertex_forces[0] += force;
-    vertex_forces[1] -= force;
-
-    vertex_force_derivatives.add(0, 0, force_derivative);
-    vertex_force_derivatives.add(1, 1, force_derivative);
-    vertex_force_derivatives.add(0, 1, -1.0f * force_derivative);
-    vertex_force_derivatives.add(1, 0, -1.0f * force_derivative);
   }
 
   void integrate_explicit_forward_euler()
@@ -686,6 +713,78 @@ class ClothSimulatorBaraffWitkin {
     float3 gravity = float3(0.0f);
     gravity.z = vertex_masses[vertex_index] * standard_gravity;  // F_grav = m * g
     vertex_forces[vertex_index] += gravity;
+  }
+
+  float3 spring_force(float3 x0, float3 x1, float k, float rest_length)
+  {
+    float3 spring_direction = x1 - x0; /* Points towards x1 */
+    float length = spring_direction.normalize_and_get_length();
+
+    float3 force = k * (length - rest_length) * spring_direction;
+    return force;
+  }
+
+  float3x3 spring_force_jacobian(float3 x0, float3 x1, float k, float rest_length)
+  {
+    float3 spring_direction = x1 - x0; /* Points towards x1 */
+    float length = spring_direction.normalize_and_get_length();
+    float3x3 spring_outer = 1.0f / float3::dot(spring_direction, spring_direction) *
+                            float3x3::outer(spring_direction, spring_direction);
+
+    /* TODO investigate setting jacobian to zero when in compression */
+    float3x3 force_derivative = -k * spring_outer - k * (1 - rest_length / length) *
+                                                        (float3x3::identity() - spring_outer);
+    return force_derivative;
+  }
+
+  void calculate_spring(int spring_index)
+  {
+    /* 1D spring experiment. */
+    int2 spring = spring_vertex_indices[spring_index];
+    int i = spring.i;
+    int j = spring.j;
+    float3 x0 = vertex_positions[i];
+    float3 x1 = vertex_positions[j];
+
+    float rest_length = spring_rest_lengths[spring_index];
+    float k = spring_stiffness[spring_index];
+
+    float3 spring_direction = x1 - x0; /* Points towards x1 */
+    float length = spring_direction.normalize_and_get_length();
+    bool spring_is_in_compression = length < rest_length;
+
+    float3 force = spring_force(x0, x1, k, rest_length);
+    float3x3 force_derivative = spring_force_jacobian(x0, x1, k, rest_length);
+
+    vertex_forces[i] += force;
+    vertex_forces[j] -= force;
+
+    vertex_force_derivatives.add(i, i, force_derivative);
+    vertex_force_derivatives.add(j, j, force_derivative);
+    vertex_force_derivatives.add(i, j, -1.0f * force_derivative);
+    vertex_force_derivatives.add(j, i, -1.0f * force_derivative);
+
+    if (damp_springs) {
+      float3 v0 = vertex_velocities[i];
+      float3 v1 = vertex_velocities[j];
+      float3 velocity_difference = v1 - v0;
+
+      float kd = spring_damping_factor * k;
+      float3 spring_direction = x1 - x0; /* Points towards x1 */
+      float length = spring_direction.normalize_and_get_length();
+
+      float3 damping_force = kd * float3::dot(velocity_difference, spring_direction) * spring_direction;
+
+      float3x3 damping_derivative = -kd * float3x3::outer(spring_direction, spring_direction);
+
+      vertex_forces[i] += damping_force;
+      vertex_forces[j] -= damping_force;
+
+      vertex_force_velocity_derivatives.add(i, i, damping_derivative);
+      vertex_force_velocity_derivatives.add(j, j, damping_derivative);
+      vertex_force_velocity_derivatives.add(i, j, -1.0f * damping_derivative);
+      vertex_force_velocity_derivatives.add(j, i, -1.0f * damping_derivative);
+    }
   }
 
   void calculate_stretch(int triangle_index, float3 wu, float3 wv)

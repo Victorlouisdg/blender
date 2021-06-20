@@ -58,19 +58,25 @@ static void initData(ModifierData *modifier_data)
   std::cout << "initializing Cloth BW data" << std::endl;
   ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
   cbw_modifier_data->n_substeps = 1;
+  
   cbw_modifier_data->stretch_stiffness = 20000.0f;
   cbw_modifier_data->shear_stiffness = 1000.0f;
   cbw_modifier_data->bending_stiffness = 0.01f;
+  cbw_modifier_data->spring_stiffness = 2000.0f;
 
   cbw_modifier_data->stretch_damping_factor = 0.01f;
   cbw_modifier_data->shear_damping_factor = 0.01f;
   cbw_modifier_data->bending_damping_factor = 0.1f;
+  cbw_modifier_data->spring_damping_factor = 0.1f;
 
   cbw_modifier_data->enable_shear = true;
   cbw_modifier_data->enable_bending = true;
+
   cbw_modifier_data->damp_stretch = true;
   cbw_modifier_data->damp_shear = true;
   cbw_modifier_data->damp_bending = true;
+  cbw_modifier_data->damp_springs = true;
+
   cbw_modifier_data->use_explicit_integration = false;
 }
 
@@ -114,18 +120,25 @@ static void panel_draw(const bContext *UNUSED(C), Panel *panel)
     uiItemR(col, ptr, "collision_object", 0, nullptr, ICON_NONE);
     modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", NULL, NULL);
     uiItemR(layout, ptr, "n_substeps", 0, NULL, ICON_NONE);
+
     uiItemR(layout, ptr, "stretch_stiffness", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "shear_stiffness", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "bending_stiffness", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "spring_stiffness", 0, NULL, ICON_NONE);
+
     uiItemR(layout, ptr, "stretch_damping_factor", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "shear_damping_factor", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "bending_damping_factor", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "spring_damping_factor", 0, NULL, ICON_NONE);
 
     uiItemR(layout, ptr, "enable_shear", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "enable_bending", 0, NULL, ICON_NONE);
+
     uiItemR(layout, ptr, "damp_stretch", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "damp_shear", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "damp_bending", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "damp_springs", 0, NULL, ICON_NONE);
+
     uiItemR(layout, ptr, "use_explicit_integration", 0, NULL, ICON_NONE);
   }
   modifier_panel_end(layout, ptr);
@@ -159,14 +172,17 @@ static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *
                           cbw_modifier_data->stretch_stiffness,
                           cbw_modifier_data->shear_stiffness,
                           cbw_modifier_data->bending_stiffness,
+                          cbw_modifier_data->spring_stiffness,
                           cbw_modifier_data->stretch_damping_factor,
                           cbw_modifier_data->shear_damping_factor,
                           cbw_modifier_data->bending_damping_factor,
+                          cbw_modifier_data->spring_damping_factor,
                           cbw_modifier_data->enable_shear,
                           cbw_modifier_data->enable_bending,
                           cbw_modifier_data->damp_stretch,
                           cbw_modifier_data->damp_shear,
                           cbw_modifier_data->damp_bending,
+                          cbw_modifier_data->damp_springs,
                           cbw_modifier_data->use_explicit_integration);
     // simulator->initialize(
     //     *mesh, cbw_modifier_data->n_substeps, cbw_modifier_data->use_explicit_integration);
