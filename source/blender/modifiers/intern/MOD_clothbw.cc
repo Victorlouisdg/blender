@@ -57,15 +57,15 @@ static void initData(ModifierData *modifier_data)
 {
   std::cout << "initializing Cloth BW data" << std::endl;
   ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
-  cbw_modifier_data->n_substeps = 1;
+  cbw_modifier_data->n_substeps = 5;
   
-  cbw_modifier_data->stretch_stiffness = 20000.0f;
-  cbw_modifier_data->shear_stiffness = 1000.0f;
+  cbw_modifier_data->stretch_stiffness = 200.0f;
+  cbw_modifier_data->shear_stiffness = 50.0f;
   cbw_modifier_data->bending_stiffness = 0.01f;
   cbw_modifier_data->spring_stiffness = 2000.0f;
 
-  cbw_modifier_data->stretch_damping_factor = 0.01f;
-  cbw_modifier_data->shear_damping_factor = 0.01f;
+  cbw_modifier_data->stretch_damping_factor = 0.1f;
+  cbw_modifier_data->shear_damping_factor = 0.1f;
   cbw_modifier_data->bending_damping_factor = 0.1f;
   cbw_modifier_data->spring_damping_factor = 0.1f;
 

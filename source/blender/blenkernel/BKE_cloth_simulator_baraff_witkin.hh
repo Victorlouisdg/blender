@@ -128,7 +128,7 @@ class ClothSimulatorBaraffWitkin {
   Array<float> bending_stiffness;
   Array<float> bending_rest_lengths;
 
-  Array<float> triangle_areas_uv;
+  Array<float> triangle_areas_uv_square_root;
   Array<float3> edges_normals;
 
   int n_springs;
@@ -425,7 +425,7 @@ class ClothSimulatorBaraffWitkin {
     n_triangles = looptris.size();
 
     triangle_vertex_indices = Array<int3>(n_triangles);
-    triangle_areas_uv = Array<float>(n_triangles);
+    triangle_areas_uv_square_root = Array<float>(n_triangles);
     triangle_normals = Array<float3>(n_triangles);
     triangle_inverted_delta_u_matrices = Array<float2x2>(n_triangles);
     triangle_wu_derivatives = Array<float3>(n_triangles);
@@ -468,9 +468,8 @@ class ClothSimulatorBaraffWitkin {
       /* The length of the cross product vector is equal to the area of the parallelogram spanned
        * by the two input vectors, the triangle area is conveniently half of this area. */
       const float triangle_area_uv = normal.length() / 2;
-      triangle_areas_uv[looptri_index] = triangle_area_uv;
-      // triangle_areas_uv[looptri_index] = powf(triangle_area_uv, 0.75f); /* Pritchard's
-      // recommendation. */
+      triangle_areas_uv_square_root[looptri_index] = sqrtf(
+          triangle_area_uv); /* Sqrt such that energy is linear in area (see Bhat and Pritchard)*/
 
       float2 uv0 = vertex_positions_uv[v0_index];
       float2 uv1 = vertex_positions_uv[v1_index];
@@ -773,7 +772,8 @@ class ClothSimulatorBaraffWitkin {
       float3 spring_direction = x1 - x0; /* Points towards x1 */
       float length = spring_direction.normalize_and_get_length();
 
-      float3 damping_force = kd * float3::dot(velocity_difference, spring_direction) * spring_direction;
+      float3 damping_force = kd * float3::dot(velocity_difference, spring_direction) *
+                             spring_direction;
 
       float3x3 damping_derivative = -kd * float3x3::outer(spring_direction, spring_direction);
 
@@ -791,7 +791,7 @@ class ClothSimulatorBaraffWitkin {
   {
     int ti = triangle_index;
 
-    float area_uv = triangle_areas_uv[ti];
+    float area_uv = triangle_areas_uv_square_root[ti];
     float wu_norm = wu.normalize_and_get_length();
     float wv_norm = wv.normalize_and_get_length();
 
@@ -880,7 +880,7 @@ class ClothSimulatorBaraffWitkin {
   void calculate_shear(int triangle_index, float3 wu, float3 wv)
   {
     int ti = triangle_index;
-    float area_uv = triangle_areas_uv[ti];
+    float area_uv = triangle_areas_uv_square_root[ti];
 
     /* Shear condition: section 4.3 in [BW98]. */
     float C = area_uv * float3::dot(wu, wv);
