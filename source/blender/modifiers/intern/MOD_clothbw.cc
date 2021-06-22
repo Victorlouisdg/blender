@@ -19,7 +19,7 @@
  */
 
 #include "BKE_cloth_simulator_baraff_witkin.hh"
-// #include "BKE_cloth_simulator_bw_eigen.hh"
+#include "BKE_cloth_simulator_bw_eigen.hh"
 
 #include "BKE_deform.h"
 #include "BKE_lib_query.h"
@@ -85,7 +85,7 @@ static void freeData(ModifierData *modifier_data)
   std::cout << "freeing Cloth BW data" << std::endl;
   ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
   if (cbw_modifier_data->simulator_object) {
-    delete reinterpret_cast<ClothSimulatorBaraffWitkin *>(cbw_modifier_data->simulator_object);
+    // delete reinterpret_cast<ClothSimulatorBaraffWitkin *>(cbw_modifier_data->simulator_object);
   }
 }
 
@@ -155,42 +155,42 @@ static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *
   ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
 
   if (!cbw_modifier_data->simulator_object) {
-    cbw_modifier_data->simulator_object = new ClothSimulatorBaraffWitkin();
+    // cbw_modifier_data->simulator_object = new ClothSimulatorBaraffWitkin();
     // cbw_modifier_data->simulator_object = new ClothSimulatorBWEigen();
   }
 
-  ClothSimulatorBaraffWitkin *simulator = reinterpret_cast<ClothSimulatorBaraffWitkin *>(
-      cbw_modifier_data->simulator_object);
+  // ClothSimulatorBaraffWitkin *simulator = reinterpret_cast<ClothSimulatorBaraffWitkin *>(
+  //     cbw_modifier_data->simulator_object);
 
   /* TODO: figure out how the caching system works. */
   int framenr = DEG_get_ctime(ctx->depsgraph);
 
   /* Currently added the modifier on a frame the is not 1 results in a crash because of this. */
   if (framenr == 1) {
-    simulator->initialize(*mesh,
-                          cbw_modifier_data->n_substeps,
-                          cbw_modifier_data->stretch_stiffness,
-                          cbw_modifier_data->shear_stiffness,
-                          cbw_modifier_data->bending_stiffness,
-                          cbw_modifier_data->spring_stiffness,
-                          cbw_modifier_data->stretch_damping_factor,
-                          cbw_modifier_data->shear_damping_factor,
-                          cbw_modifier_data->bending_damping_factor,
-                          cbw_modifier_data->spring_damping_factor,
-                          cbw_modifier_data->enable_shear,
-                          cbw_modifier_data->enable_bending,
-                          cbw_modifier_data->damp_stretch,
-                          cbw_modifier_data->damp_shear,
-                          cbw_modifier_data->damp_bending,
-                          cbw_modifier_data->damp_springs,
-                          cbw_modifier_data->use_explicit_integration);
+    // simulator->initialize(*mesh,
+    //                       cbw_modifier_data->n_substeps,
+    //                       cbw_modifier_data->stretch_stiffness,
+    //                       cbw_modifier_data->shear_stiffness,
+    //                       cbw_modifier_data->bending_stiffness,
+    //                       cbw_modifier_data->spring_stiffness,
+    //                       cbw_modifier_data->stretch_damping_factor,
+    //                       cbw_modifier_data->shear_damping_factor,
+    //                       cbw_modifier_data->bending_damping_factor,
+    //                       cbw_modifier_data->spring_damping_factor,
+    //                       cbw_modifier_data->enable_shear,
+    //                       cbw_modifier_data->enable_bending,
+    //                       cbw_modifier_data->damp_stretch,
+    //                       cbw_modifier_data->damp_shear,
+    //                       cbw_modifier_data->damp_bending,
+    //                       cbw_modifier_data->damp_springs,
+    //                       cbw_modifier_data->use_explicit_integration);
     // simulator->initialize(
     //     *mesh, cbw_modifier_data->n_substeps, cbw_modifier_data->use_explicit_integration);
 
     Object *collision_object = cbw_modifier_data->collision_object;
     if (collision_object) {
       Mesh *collision_mesh = BKE_object_get_pre_modified_mesh(collision_object);
-      simulator->set_collision_mesh(*collision_mesh);
+      // simulator->set_collision_mesh(*collision_mesh);
     }
     return mesh;
   }
@@ -206,18 +206,18 @@ static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *
       for (uint i = 0; i < mesh->totvert; i++, dv++) {
         const bool found = BKE_defvert_find_weight(dv, defgrp_index) > 0.0f;
         if (found) {
-          simulator->pin(i);
+          // simulator->pin(i);
         }
       }
     }
   }
 
-  simulator->step();
+  // simulator->step();
 
   for (int i : IndexRange(mesh->totvert)) {
-    mesh->mvert[i].co[0] = simulator->vertex_positions[i][0];
-    mesh->mvert[i].co[1] = simulator->vertex_positions[i][1];
-    mesh->mvert[i].co[2] = simulator->vertex_positions[i][2];
+    // mesh->mvert[i].co[0] = simulator->vertex_positions[i][0];
+    // mesh->mvert[i].co[1] = simulator->vertex_positions[i][1];
+    // mesh->mvert[i].co[2] = simulator->vertex_positions[i][2];
 
     // mesh->mvert[i].co[0] = simulator->vertex_positions[3 * i];
     // mesh->mvert[i].co[1] = simulator->vertex_positions[3 * i + 1];

@@ -1,5 +1,8 @@
 #include <iostream>
 
+#include "BKE_cloth_bw_general.hh"
+#include "BKE_cloth_simulator_bw_attribute_provider.hh"
+
 #include "BLI_index_range.hh"
 #include "BLI_vector.hh"
 
@@ -18,163 +21,147 @@ using Eigen::SparseLU;
 using Eigen::SparseMatrix;
 using Eigen::VectorXd;
 
-typedef Eigen::Matrix<double, 2, 1> Vector2;
-typedef Eigen::Matrix<double, 3, 1> Vector3;
-typedef Eigen::Matrix<double, 3, 2> Matrix3x2;
-typedef Eigen::Matrix<double, 6, 6> Matrix6x6;
-
 class ClothSimulatorBWEigen {
  public:
-  int n_substeps;
+  int substeps;
   double step_time; /* Currently assuming 30 fps. */
   double substep_time;
 
   bool use_explicit_integration;
 
-  int n_vertices;
-  int n_triangles;
+  int amount_of_vertices;
+  int amount_of_triangles;
+  int system_size;
 
   double standard_gravity = -9.81; /* in m/s^2 */
 
   /* State */
-  VectorXd vertex_positions;
-  VectorXd vertex_velocities;
+  VectorXd &vertex_positions;
+  VectorXd &vertex_velocities;
 
-  VectorXd vertex_masses;
-
+  /* Attributes owned by the simulator. */
   VectorXd vertex_forces;
   SparseMatrix<double> vertex_force_derivatives;
 
+  /* Read-Only Attributes, eventually provided by e.g. Geometry Nodes */
+  VectorXd &vertex_masses;
+
   Vector<int> pinned_vertices;
 
-  void initialize(const Mesh &mesh, int n_substeps, bool use_explicit_integration)
+  void initialize(const Mesh &mesh, int substeps, bool use_explicit_integration)
   {
-    this->n_substeps = n_substeps;
+    this->substeps = substeps;
     step_time = 1.0 / 30.0; /* Currently assuming 30 fps. */
-    substep_time = step_time / n_substeps;
+    substep_time = step_time / substeps;
 
     this->use_explicit_integration = use_explicit_integration;
 
-    n_vertices = mesh.totvert;
+    ClothBWAttributeProvider AP = ClothBWAttributeProvider(mesh);
+    amount_of_vertices = AP.get_amount_of_vertices();
+    system_size = 3 * amount_of_vertices;
 
-    initialize_vertex_attributes(mesh);
+    vertex_forces = VectorXd(system_size);
+    vertex_force_derivatives = SparseMatrix<double>(system_size, system_size);
+
+    // vertex_positions = AP.get_vertex_positions();
+    // vertex_velocities = AP.get_vertex_velocities();
+    // vertex_masses = AP.get_vertex_masses();
   }
 
-  void initialize_vertex_attributes(const Mesh &mesh)
-  {
-    double fixed_vertex_mass = 1.0 / n_vertices;
-    vertex_masses = VectorXd(n_vertices);
-    vertex_masses.fill(fixed_vertex_mass);
+  // void step()
+  // {
+  //   std::cout << "step eigen" << std::endl;
+  //   for (int substep : IndexRange(n_substeps)) {
+  //     reset_forces_and_derivatives();
+  //     calculate_forces_and_derivatives();
 
-    /* These have size 3 * n_vertices because they contain a vector with x,y and z for each vertex.
-     */
-    vertex_positions = VectorXd(3 * n_vertices);
-    vertex_velocities = VectorXd(3 * n_vertices);
-    vertex_velocities.setZero();
-    vertex_forces = VectorXd(3 * n_vertices);
-    vertex_force_derivatives = SparseMatrix<double>(3 * n_vertices, 3 * n_vertices);
+  //     if (use_explicit_integration) {
+  //       integrate_explicit_forward_euler();
+  //     }
+  //     else {
+  //       integrate_implicit_backward_euler();
+  //     }
+  //   }
+  // }
 
-    for (const int i : IndexRange(n_vertices)) {
-      MVert vertex = mesh.mvert[i];
-      vertex_positions[3 * i] = vertex.co[0];
-      vertex_positions[3 * i + 1] = vertex.co[1];
-      vertex_positions[3 * i + 2] = vertex.co[2];
-    }
-  }
+  // void pin(int vertex_index)
+  // {
+  //   pinned_vertices.append(vertex_index);
+  //   // solver.setConstraint(vertex_index, float3(0.0f), float3x3(0.0f));
+  // }
 
-  void step()
-  {
-    std::cout << "step eigen" << std::endl;
-    for (int substep : IndexRange(n_substeps)) {
-      reset_forces_and_derivatives();
-      calculate_forces_and_derivatives();
+  // void calculate_forces_and_derivatives()
+  // {
+  //   for (int vertex_index : IndexRange(n_vertices)) {
+  //     calculate_gravity(vertex_index);
+  //   }
 
-      if (use_explicit_integration) {
-        integrate_explicit_forward_euler();
-      }
-      else {
-        integrate_implicit_backward_euler();
-      }
-    }
-  }
+  //   // for (int triangle_index : IndexRange(n_triangles)) {
+  //   //   auto [wu, wv] = calculate_w_uv(triangle_index);
+  //   //   calculate_stretch(triangle_index, wu, wv);
+  //   // }
+  // }
 
-  void pin(int vertex_index)
-  {
-    pinned_vertices.append(vertex_index);
-    // solver.setConstraint(vertex_index, float3(0.0f), float3x3(0.0f));
-  }
+  // void calculate_gravity(int vertex_index)
+  // {
+  //   Vector3 gravity = Vector3();
+  //   gravity.setZero();
+  //   gravity[2] = vertex_masses[vertex_index] * standard_gravity;  // F_grav = m * g
+  //   vertex_forces.segment(3 * vertex_index, 3) += gravity;
+  // }
 
-  void calculate_forces_and_derivatives()
-  {
-    for (int vertex_index : IndexRange(n_vertices)) {
-      calculate_gravity(vertex_index);
-    }
+  // void integrate_explicit_forward_euler()
+  // {
+  //   VectorXd vertex_accelerations(3 * n_vertices);
 
-    // for (int triangle_index : IndexRange(n_triangles)) {
-    //   auto [wu, wv] = calculate_w_uv(triangle_index);
-    //   calculate_stretch(triangle_index, wu, wv);
-    // }
-  }
+  //   for (int i : IndexRange(n_vertices)) {
+  //     vertex_accelerations.segment(3 * i, 3) = 1.0 / vertex_masses[i] *
+  //                                              vertex_forces.segment(3 * i, 3);
 
-  void calculate_gravity(int vertex_index)
-  {
-    Vector3 gravity = Vector3();
-    gravity.setZero();
-    gravity[2] = vertex_masses[vertex_index] * standard_gravity;  // F_grav = m * g
-    vertex_forces.segment(3 * vertex_index, 3) += gravity;
-  }
+  //     std::cout << vertex_accelerations.segment(3 * i, 3) << std::endl;
+  //   }
 
-  void integrate_explicit_forward_euler()
-  {
-    VectorXd vertex_accelerations(3 * n_vertices);
+  //   for (int i : pinned_vertices) {
+  //     vertex_accelerations.segment(3 * i, 3).setZero();
+  //   }
 
-    for (int i : IndexRange(n_vertices)) {
-      vertex_accelerations.segment(3 * i, 3) = 1.0 / vertex_masses[i] *
-                                               vertex_forces.segment(3 * i, 3);
+  //   for (int i : IndexRange(n_vertices)) {
+  //     vertex_velocities.segment(3 * i, 3) += vertex_accelerations.segment(3 * i, 3) *
+  //     substep_time; vertex_positions.segment(3 * i, 3) += vertex_velocities.segment(3 * i, 3) *
+  //     substep_time;
+  //   }
+  // }
 
-      std::cout << vertex_accelerations.segment(3 * i, 3) << std::endl;
-    }
+  // void integrate_implicit_backward_euler()
+  // {
+  //   /*First we build the A and b of the linear system Ax = b. Then we use eigen to solve it. */
+  //   double h = substep_time;
+  //   SparseMatrix<double> &dfdx = vertex_force_derivatives;
 
-    for (int i : pinned_vertices) {
-      vertex_accelerations.segment(3 * i, 3).setZero();
-    }
+  //   VectorXd &v0 = vertex_velocities;
+  //   VectorXd &f0 = vertex_forces;
 
-    for (int i : IndexRange(n_vertices)) {
-      vertex_velocities.segment(3 * i, 3) += vertex_accelerations.segment(3 * i, 3) * substep_time;
-      vertex_positions.segment(3 * i, 3) += vertex_velocities.segment(3 * i, 3) * substep_time;
-    }
-  }
+  //   /* Creating the b vector, the right hand side of the linear system. */
+  //   VectorXd b(3 * n_vertices);  // TODO maybe preallocate this memory if needed.
+  //   b = dfdx * v0;
+  //   b *= h;
+  //   b += f0;
+  //   b *= h;
 
-  void integrate_implicit_backward_euler()
-  {
-    /*First we build the A and b of the linear system Ax = b. Then we use eigen to solve it. */
-    double h = substep_time;
-    SparseMatrix<double> &dfdx = vertex_force_derivatives;
+  //   /* Creating the A matrix the left hand side of the linear systems. */
+  //   SparseMatrix<double> &A = dfdx;
+  //   A *= (h * h);
 
-    VectorXd &v0 = vertex_velocities;
-    VectorXd &f0 = vertex_forces;
+  //   // TODO A = M (diagonal) - A;
+  //   for (int i : IndexRange(n_vertices)) {
+  //     A.coeffRef(i, i) = vertex_masses[i] - A.coeffRef(i, i);
+  //   }
+  // }
 
-    /* Creating the b vector, the right hand side of the linear system. */
-    VectorXd b(3 * n_vertices);  // TODO maybe preallocate this memory if needed.
-    b = dfdx * v0;
-    b *= h;
-    b += f0;
-    b *= h;
-
-    /* Creating the A matrix the left hand side of the linear systems. */
-    SparseMatrix<double> &A = dfdx;
-    A *= (h * h);
-
-    // TODO A = M (diagonal) - A;
-    for (int i : IndexRange(n_vertices)) {
-      A.coeffRef(i, i) = vertex_masses[i] - A.coeffRef(i, i);
-    }
-  }
-
-  void reset_forces_and_derivatives()
-  {
-    vertex_forces.fill(0.0);
-  }
+  // void reset_forces_and_derivatives()
+  // {
+  //   vertex_forces.fill(Vector3(0.0));
+  // }
 
   // void stretchHessian(const Matrix3x2 &F, Matrix6x6 &H) const
   // {

@@ -313,7 +313,10 @@ set(SRC
   BKE_ccg.h
   BKE_cdderivedmesh.h
   BKE_cloth.h
+  BKE_cloth_bw_general.hh
   BKE_cloth_simulator_baraff_witkin.hh
+  BKE_cloth_simulator_bw_eigen.hh
+  BKE_cloth_simulator_bw_attribute_provider.hh
   BKE_cloth_simulator_constants.hh
   BKE_collection.h
   BKE_collision.h

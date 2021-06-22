@@ -2374,6 +2374,9 @@ typedef struct ClothBWModifierData {
   short use_explicit_integration;
   char _pad1[2];
 
+  // Storing this pointer might be a violation of the principle: "DNA data has no runtime fields".
+  // However I don't know of a better way to keep an object alive between 2 subsequent modifier
+  // evaluations.
   void *simulator_object;
 } ClothBWModifierData;
 

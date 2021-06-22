@@ -27,7 +27,7 @@ extern "C" {
 #include "draw_debug.h"
 }
 
-#include <eigen3/Eigen/Dense>
+// #include <eigen3/Eigen/Dense>
 
 /* Note about variable names in the simulator: in general I've tried to give the member
  * variables/attributes long and clear names. I deliberately read these out into local variable
