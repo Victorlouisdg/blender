@@ -18,8 +18,7 @@
  * \ingroup modifiers
  */
 
-#include "BKE_cloth_simulator_baraff_witkin.hh"
-#include "BKE_cloth_simulator_bw_eigen.hh"
+#include "BKE_cloth_simulator_bw.hh"
 
 #include "BKE_deform.h"
 #include "BKE_lib_query.h"
@@ -53,39 +52,39 @@
 
 using blender::Span;
 
-static void initData(ModifierData *modifier_data)
+static void initData(ModifierData *md)
 {
   std::cout << "initializing Cloth BW data" << std::endl;
-  ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
-  cbw_modifier_data->n_substeps = 5;
-  
-  cbw_modifier_data->stretch_stiffness = 200.0f;
-  cbw_modifier_data->shear_stiffness = 50.0f;
-  cbw_modifier_data->bending_stiffness = 0.01f;
-  cbw_modifier_data->spring_stiffness = 2000.0f;
+  ClothBWModifierData *d = reinterpret_cast<ClothBWModifierData *>(md);
+  d->n_substeps = 5;
 
-  cbw_modifier_data->stretch_damping_factor = 0.1f;
-  cbw_modifier_data->shear_damping_factor = 0.1f;
-  cbw_modifier_data->bending_damping_factor = 0.1f;
-  cbw_modifier_data->spring_damping_factor = 0.1f;
+  d->stretch_stiffness = 200.0f;
+  d->shear_stiffness = 50.0f;
+  d->bending_stiffness = 0.01f;
+  d->spring_stiffness = 2000.0f;
 
-  cbw_modifier_data->enable_shear = true;
-  cbw_modifier_data->enable_bending = true;
+  d->stretch_damping_factor = 0.1f;
+  d->shear_damping_factor = 0.1f;
+  d->bending_damping_factor = 0.1f;
+  d->spring_damping_factor = 0.1f;
 
-  cbw_modifier_data->damp_stretch = true;
-  cbw_modifier_data->damp_shear = true;
-  cbw_modifier_data->damp_bending = true;
-  cbw_modifier_data->damp_springs = true;
+  d->enable_shear = true;
+  d->enable_bending = true;
 
-  cbw_modifier_data->use_explicit_integration = false;
+  d->damp_stretch = true;
+  d->damp_shear = true;
+  d->damp_bending = true;
+  d->damp_springs = true;
+
+  d->use_explicit_integration = false;
 }
 
-static void freeData(ModifierData *modifier_data)
+static void freeData(ModifierData *md)
 {
   std::cout << "freeing Cloth BW data" << std::endl;
-  ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
-  if (cbw_modifier_data->simulator_object) {
-    // delete reinterpret_cast<ClothSimulatorBaraffWitkin *>(cbw_modifier_data->simulator_object);
+  ClothBWModifierData *d = reinterpret_cast<ClothBWModifierData *>(md);
+  if (d->simulator_object) {
+    // delete reinterpret_cast<ClothSimulatorBaraffWitkin *>(d->simulator_object);
   }
 }
 
@@ -150,44 +149,25 @@ static void panelRegister(ARegionType *region_type)
   modifier_panel_register(region_type, eModifierType_ClothBW, panel_draw);
 }
 
-static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *ctx, Mesh *mesh)
+static Mesh *modifyMesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
 {
-  ClothBWModifierData *cbw_modifier_data = reinterpret_cast<ClothBWModifierData *>(modifier_data);
+  ClothBWModifierData *modifier_data = reinterpret_cast<ClothBWModifierData *>(md);
 
-  if (!cbw_modifier_data->simulator_object) {
-    // cbw_modifier_data->simulator_object = new ClothSimulatorBaraffWitkin();
-    // cbw_modifier_data->simulator_object = new ClothSimulatorBWEigen();
+  if (!modifier_data->simulator_object) {
+    modifier_data->simulator_object = new ClothSimulatorBW();
   }
 
-  // ClothSimulatorBaraffWitkin *simulator = reinterpret_cast<ClothSimulatorBaraffWitkin *>(
-  //     cbw_modifier_data->simulator_object);
+  ClothSimulatorBW *simulator = reinterpret_cast<ClothSimulatorBW *>(
+      modifier_data->simulator_object);
 
   /* TODO: figure out how the caching system works. */
   int framenr = DEG_get_ctime(ctx->depsgraph);
 
   /* Currently added the modifier on a frame the is not 1 results in a crash because of this. */
   if (framenr == 1) {
-    // simulator->initialize(*mesh,
-    //                       cbw_modifier_data->n_substeps,
-    //                       cbw_modifier_data->stretch_stiffness,
-    //                       cbw_modifier_data->shear_stiffness,
-    //                       cbw_modifier_data->bending_stiffness,
-    //                       cbw_modifier_data->spring_stiffness,
-    //                       cbw_modifier_data->stretch_damping_factor,
-    //                       cbw_modifier_data->shear_damping_factor,
-    //                       cbw_modifier_data->bending_damping_factor,
-    //                       cbw_modifier_data->spring_damping_factor,
-    //                       cbw_modifier_data->enable_shear,
-    //                       cbw_modifier_data->enable_bending,
-    //                       cbw_modifier_data->damp_stretch,
-    //                       cbw_modifier_data->damp_shear,
-    //                       cbw_modifier_data->damp_bending,
-    //                       cbw_modifier_data->damp_springs,
-    //                       cbw_modifier_data->use_explicit_integration);
-    // simulator->initialize(
-    //     *mesh, cbw_modifier_data->n_substeps, cbw_modifier_data->use_explicit_integration);
+    simulator->initialize(*mesh, *modifier_data);
 
-    Object *collision_object = cbw_modifier_data->collision_object;
+    Object *collision_object = modifier_data->collision_object;
     if (collision_object) {
       Mesh *collision_mesh = BKE_object_get_pre_modified_mesh(collision_object);
       // simulator->set_collision_mesh(*collision_mesh);
@@ -196,8 +176,7 @@ static Mesh *modifyMesh(ModifierData *modifier_data, const ModifierEvalContext *
   }
 
   /* Ugly piece of code to set pinned vertices. */
-  const int defgrp_index = BKE_object_defgroup_name_index(ctx->object,
-                                                          cbw_modifier_data->defgrp_name);
+  const int defgrp_index = BKE_object_defgroup_name_index(ctx->object, modifier_data->defgrp_name);
   if (defgrp_index != -1) {
     MDeformVert *dvert, *dv;
     dvert = (MDeformVert *)CustomData_get_layer(&mesh->vdata, CD_MDEFORMVERT);

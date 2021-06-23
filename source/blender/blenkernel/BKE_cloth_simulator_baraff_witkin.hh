@@ -475,6 +475,8 @@ class ClothSimulatorBaraffWitkin {
       float2 uv1 = vertex_positions_uv[v1_index];
       float2 uv2 = vertex_positions_uv[v2_index];
 
+      // TODO rescale these UVs so areas are not compressed in initial state
+
       float u0 = uv0[0];
       float u1 = uv1[0];
       float u2 = uv2[0];
@@ -796,8 +798,8 @@ class ClothSimulatorBaraffWitkin {
     float wv_norm = wv.normalize_and_get_length();
 
     /* Stretch condition: Equation (10) in BW98. */
-    float Cu = area_uv * (wu_norm - 1.0);
-    float Cv = area_uv * (wv_norm - 1.0);
+    float Cu = area_uv * (wu_norm - 1.0f);
+    float Cv = area_uv * (wv_norm - 1.0f);
 
     int3 vertex_indices = triangle_vertex_indices[ti];
     float3 dwu_dx = triangle_wu_derivatives[ti];

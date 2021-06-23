@@ -127,6 +127,16 @@ struct float3x3 {
     return result;
   }
 
+  float3x3 &operator+=(const float3x3 &b)
+  {
+    for (int i = 0; i < 3; i++) {
+      for (int j = 0; j < 3; j++) {
+        this->values[i][j] += b.values[i][j];
+      }
+    }
+    return *this;
+  }
+
   friend float3x3 operator-(const float3x3 &a, const float3x3 &b)
   {
     float3x3 result;

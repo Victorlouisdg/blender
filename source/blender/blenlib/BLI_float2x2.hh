@@ -37,13 +37,6 @@ struct float2x2 {
   {
   }
 
-  // friend float2x2 operator*(const float2x2 &a, const float2 &b)
-  // {
-  //   float2x2 result;
-  //   mul_m2_v2(result.values, a.values, &b);
-  //   return result;
-  // }
-
   friend float2x2 operator*(const float s, const float2x2 &a)
   {
     float2x2 result;
@@ -59,6 +52,7 @@ struct float2x2 {
   float2x2 inverted() const
   {
     /* TODO: maybe move this to matrix_math.c? And check for division by zero. */
+    /* Also I learned Blender uses colunm major order thus check ordering. */
     float a = values[0][0];
     float b = values[0][1];
     float c = values[1][0];
