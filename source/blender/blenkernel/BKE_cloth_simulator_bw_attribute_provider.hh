@@ -17,6 +17,11 @@
 #include "DNA_meshdata_types.h"
 #include "DNA_modifier_types.h"
 
+#include "BKE_customdata.h"
+#include "BKE_deform.h"
+#include "BKE_lib_query.h"
+#include "BKE_object.h"
+
 using blender::Array;
 using blender::float2;
 using blender::float2x2;
@@ -26,6 +31,7 @@ using blender::IndexRange;
 using blender::int2;
 using blender::int3;
 using blender::int4;
+using blender::MutableSpan;
 using blender::Span;
 using blender::Vector;
 
@@ -56,15 +62,24 @@ class ClothBWAttributeProvider {
   Array<float3> triangle_wu_derivatives;
   Array<float3> triangle_wv_derivatives;
 
+  Vector<int> pinned_vertices;
+
  public:
-  ClothBWAttributeProvider(const Mesh &mesh, const ClothBWModifierData &modifier_data)
+  ClothBWAttributeProvider()
+  {
+  }
+
+  ClothBWAttributeProvider(const Mesh &mesh,
+                           const ClothBWModifierData &modifier_data,
+                           const Object &cloth_object)
   {
     amount_of_vertices = mesh.totvert;
     initialize_vertex_positions(mesh);
     initialize_vertex_velocities();
     initialize_vertex_masses_uniform(1.0);
     initialize_triangle_attributes(mesh, modifier_data);
-    initialize_bending_attributes(mesh, modifier_data);
+    // initialize_bending_attributes(mesh, modifier_data);
+    initialize_pinned_vertices(mesh, modifier_data, cloth_object);
   }
 
   void initialize_vertex_positions(const Mesh &mesh)
@@ -132,12 +147,12 @@ class ClothBWAttributeProvider {
       const float3 v1_pos = vertex_positions[v1_index];
       const float3 v2_pos = vertex_positions[v2_index];
 
-      triangle_vertex_indices[looptri_index] = {v0_index, v1_index, v2_index};
+      triangle_vertex_indices[looptri_index] = int3(v0_index, v1_index, v2_index);
 
       const float3 normal = float3::cross(v1_pos - v0_pos, v2_pos - v0_pos);
       triangle_normals[looptri_index] = normal;
 
-      const float triangle_area_uv = normal.length() / 2;
+      const float triangle_area_uv = normal.length() / 2.0f;
 
       /* Sqrt such that energy is linear in area (see Bhat and Pritchard)*/
       triangle_area_factors[looptri_index] = sqrtf(triangle_area_uv);
@@ -146,41 +161,72 @@ class ClothBWAttributeProvider {
       float2 uv1 = vertex_positions_uv[v1_index];
       float2 uv2 = vertex_positions_uv[v2_index];
 
-      float u0 = uv0[0];
-      float u1 = uv1[0];
-      float u2 = uv2[0];
-      float v0 = uv0[1];
-      float v1 = uv1[1];
-      float v2 = uv2[1];
-
-      float delta_u1 = u1 - u0;
-      float delta_u2 = u2 - u0;
-      float delta_v1 = v1 - v0;
-      float delta_v2 = v2 - v0;
-
-      float array[2][2] = {{delta_u1, delta_u2}, {delta_v1, delta_v2}};
-      float2x2 delta_u = float2x2(array);
-      triangle_inverted_delta_u_matrices[looptri_index] = delta_u.inverted();
-
-      float dw_denominator = 1.0f / (delta_u1 * delta_v2 - delta_u2 * delta_v1);
-
-      float3 dwu_dx;
-      dwu_dx[0] = (delta_v1 - delta_v2) * dw_denominator;
-      dwu_dx[1] = delta_v2 * dw_denominator;
-      dwu_dx[2] = -delta_v1 * dw_denominator;
-
-      float3 dwv_dx;
-      dwv_dx[0] = (delta_u2 - delta_u1) * dw_denominator;
-      dwv_dx[1] = -delta_u2 * dw_denominator;
-      dwv_dx[2] = delta_u1 * dw_denominator;
-
+      auto [inverted_delta_u, dwu_dx, dwv_dx] = calculate_uv_derived_values(uv0, uv1, uv2);
+      triangle_inverted_delta_u_matrices[looptri_index] = inverted_delta_u;
       triangle_wu_derivatives[looptri_index] = dwu_dx;
       triangle_wv_derivatives[looptri_index] = dwv_dx;
     }
   }
 
-  void initialize_bending_attributes(const Mesh &mesh, const ClothBWModifierData &md)
+  static std::tuple<float2x2, float3, float3> calculate_uv_derived_values(float2 uv0,
+                                                                          float2 uv1,
+                                                                          float2 uv2)
   {
+    float u0 = uv0[0];
+    float u1 = uv1[0];
+    float u2 = uv2[0];
+    float v0 = uv0[1];
+    float v1 = uv1[1];
+    float v2 = uv2[1];
+
+    float delta_u1 = u1 - u0;
+    float delta_u2 = u2 - u0;
+    float delta_v1 = v1 - v0;
+    float delta_v2 = v2 - v0;
+
+    float array[2][2] = {{delta_u1, delta_u2}, {delta_v1, delta_v2}};
+    float2x2 delta_u = float2x2(array);
+    float2x2 inverted_delta_u = delta_u.inverted();
+
+    float dw_denominator = 1.0f / (delta_u1 * delta_v2 - delta_u2 * delta_v1);
+
+    float3 dwu_dx;
+    dwu_dx[0] = (delta_v1 - delta_v2) * dw_denominator;
+    dwu_dx[1] = delta_v2 * dw_denominator;
+    dwu_dx[2] = -delta_v1 * dw_denominator;
+
+    float3 dwv_dx;
+    dwv_dx[0] = (delta_u2 - delta_u1) * dw_denominator;
+    dwv_dx[1] = -delta_u2 * dw_denominator;
+    dwv_dx[2] = delta_u1 * dw_denominator;
+
+    return {inverted_delta_u, dwu_dx, dwv_dx};
+  }
+
+  // void initialize_bending_attributes(const Mesh &mesh, const ClothBWModifierData &md)
+  // {
+  // }
+
+  void initialize_pinned_vertices(const Mesh &mesh,
+                                  const ClothBWModifierData &md,
+                                  const Object &cloth_object)
+  {
+    pinned_vertices = Vector<int>();
+
+    const int defgrp_index = BKE_object_defgroup_name_index(&cloth_object, md.defgrp_name);
+    if (defgrp_index != -1) {
+      MDeformVert *dvert, *dv;
+      dvert = (MDeformVert *)CustomData_get_layer(&(mesh.vdata), CD_MDEFORMVERT);
+      if (dvert) {
+        dv = &dvert[0];
+        for (uint i = 0; i < mesh.totvert; i++, dv++) {
+          const bool found = BKE_defvert_find_weight(dv, defgrp_index) > 0.0f;
+          if (found) {
+            pinned_vertices.append(i);
+          }
+        }
+      }
+    }
   }
 
   int get_amount_of_vertices()
@@ -193,12 +239,12 @@ class ClothBWAttributeProvider {
     return amount_of_triangles;
   }
 
-  Span<float3> get_vertex_positions()
+  MutableSpan<float3> get_vertex_positions()
   {
     return vertex_positions;
   }
 
-  Span<float3> get_vertex_velocities()
+  MutableSpan<float3> get_vertex_velocities()
   {
     return vertex_velocities;
   }
@@ -236,6 +282,16 @@ class ClothBWAttributeProvider {
   Span<float3> get_triangle_wv_derivatives()
   {
     return triangle_wv_derivatives;
+  }
+
+  Span<int3> get_triangle_vertex_indices()
+  {
+    return triangle_vertex_indices;
+  }
+
+  Vector<int> get_pinned_vertices()
+  {
+    return pinned_vertices;
   }
 
   /* Copied from point_distirbute. */

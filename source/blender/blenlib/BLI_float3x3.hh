@@ -190,13 +190,18 @@ struct float3x3 {
   }
 };
 
-std::ostream &operator<<(std::ostream &os, float3x3 const &m)
+}  // namespace blender
+
+
+static std::ostream &operator<<(std::ostream &os, blender::float3x3 const &m);
+
+static std::ostream &operator<<(std::ostream &os, blender::float3x3 const &m)
 {
   /* Prints [[row0], [row1], [row2]]. */
   os << "[";
-  for (int i : IndexRange(3)) {
+  for (int i : blender::IndexRange(3)) {
     os << "[";
-    for (int j : IndexRange(3)) {
+    for (int j : blender::IndexRange(3)) {
       os << m.values[j][i];
       if (j != 2) {
         os << ", ";
@@ -207,5 +212,3 @@ std::ostream &operator<<(std::ostream &os, float3x3 const &m)
   os << "]";
   return os;
 };
-
-}  // namespace blender

@@ -84,7 +84,7 @@ static void freeData(ModifierData *md)
   std::cout << "freeing Cloth BW data" << std::endl;
   ClothBWModifierData *d = reinterpret_cast<ClothBWModifierData *>(md);
   if (d->simulator_object) {
-    // delete reinterpret_cast<ClothSimulatorBaraffWitkin *>(d->simulator_object);
+    delete reinterpret_cast<ClothSimulatorBW *>(d->simulator_object);
   }
 }
 
@@ -165,7 +165,7 @@ static Mesh *modifyMesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *
 
   /* Currently added the modifier on a frame the is not 1 results in a crash because of this. */
   if (framenr == 1) {
-    simulator->initialize(*mesh, *modifier_data);
+    simulator->initialize(*mesh, *modifier_data, *(ctx->object));
 
     Object *collision_object = modifier_data->collision_object;
     if (collision_object) {
@@ -175,32 +175,13 @@ static Mesh *modifyMesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *
     return mesh;
   }
 
-  /* Ugly piece of code to set pinned vertices. */
-  const int defgrp_index = BKE_object_defgroup_name_index(ctx->object, modifier_data->defgrp_name);
-  if (defgrp_index != -1) {
-    MDeformVert *dvert, *dv;
-    dvert = (MDeformVert *)CustomData_get_layer(&mesh->vdata, CD_MDEFORMVERT);
-    if (dvert) {
-      dv = &dvert[0];
-      for (uint i = 0; i < mesh->totvert; i++, dv++) {
-        const bool found = BKE_defvert_find_weight(dv, defgrp_index) > 0.0f;
-        if (found) {
-          // simulator->pin(i);
-        }
-      }
-    }
-  }
-
-  // simulator->step();
+  simulator->step();
 
   for (int i : IndexRange(mesh->totvert)) {
-    // mesh->mvert[i].co[0] = simulator->vertex_positions[i][0];
-    // mesh->mvert[i].co[1] = simulator->vertex_positions[i][1];
-    // mesh->mvert[i].co[2] = simulator->vertex_positions[i][2];
-
-    // mesh->mvert[i].co[0] = simulator->vertex_positions[3 * i];
-    // mesh->mvert[i].co[1] = simulator->vertex_positions[3 * i + 1];
-    // mesh->mvert[i].co[2] = simulator->vertex_positions[3 * i + 2];
+    // Make a cleaner interface to get the vertex positions.
+    mesh->mvert[i].co[0] = simulator->vertex_positions_eigen[3 * i];
+    mesh->mvert[i].co[1] = simulator->vertex_positions_eigen[3 * i + 1];
+    mesh->mvert[i].co[2] = simulator->vertex_positions_eigen[3 * i + 2];
   }
 
   return mesh;
