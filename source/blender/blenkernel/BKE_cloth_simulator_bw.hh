@@ -22,10 +22,8 @@ using blender::IndexRange;
 using blender::MutableSpan;
 using blender::Vector;
 
-typedef Eigen::Triplet<double> Triplet;
+typedef Eigen::Triplet<float> Triplet;
 
-using Eigen::COLAMDOrdering;
-using Eigen::SparseLU;
 using Eigen::SparseMatrix;
 using Eigen::VectorXf;
 
@@ -80,7 +78,9 @@ class ClothSimulatorBW {
 
   /* Global system (Eigen) */
   VectorXf vertex_forces;
-  SparseMatrix<double> vertex_force_derivatives;
+  SparseMatrix<float> vertex_force_derivatives;
+  SparseMatrix<float> mass_matrix;
+  SparseMatrix<float> identity_matrix;
 
   void initialize(const Mesh &mesh,
                   const ClothBWModifierData &modifier_data,
@@ -122,7 +122,11 @@ class ClothSimulatorBW {
     vertex_positions_eigen = VectorXf(system_size);
     vertex_velocities_eigen = VectorXf(system_size);
     vertex_forces = VectorXf(system_size);
-    vertex_force_derivatives = SparseMatrix<double>(system_size, system_size);
+    vertex_force_derivatives = SparseMatrix<float>(system_size, system_size);
+    identity_matrix = SparseMatrix<float>(system_size, system_size);
+    identity_matrix.setIdentity();
+
+    initialize_mass_matrix();
 
     /* Currently only initial positions and velocities are copied. Later maybe these need to be
      * copied each timestep to account for outside influence. */
@@ -143,12 +147,27 @@ class ClothSimulatorBW {
       aggregate_forces_local_to_global();
 
       // if (use_explicit_integration) {
-      integrate_explicit_forward_euler();
+      // integrate_explicit_forward_euler();
       // }
       // else {
-      //   integrate_implicit_backward_euler();
+      integrate_implicit_backward_euler();
       // }
     }
+  }
+
+  void initialize_mass_matrix()
+  {
+
+    mass_matrix = SparseMatrix<float>(system_size, system_size);
+
+    Array<Triplet> triplets = Array<Triplet>(system_size);
+    for (int i : IndexRange(amount_of_vertices)) {
+      for (int s : IndexRange(3)) {
+        int index = 3 * i + s;
+        triplets[index] = Triplet(index, index, vertex_masses[i]);
+      }
+    }
+    mass_matrix.setFromTriplets(triplets.begin(), triplets.end());
   }
 
   void calculate_forces_and_derivatives()
@@ -241,6 +260,8 @@ class ClothSimulatorBW {
         }
       }
     }
+
+    vertex_force_derivatives.setFromTriplets(triplets.begin(), triplets.end());
   }
 
   void integrate_explicit_forward_euler()
@@ -275,29 +296,64 @@ class ClothSimulatorBW {
     }
   }
 
-  // void integrate_implicit_backward_euler()
-  // {
-  //   /*First we build the A and b of the linear system Ax = b. Then we use eigen to solve it. */
-  //   double h = substep_time;
-  //   SparseMatrix<double> &dfdx = vertex_force_derivatives;
+  void integrate_implicit_backward_euler()
+  {
+    /*First we build the A and b of the linear system Ax = b. Then we use eigen to solve it. */
+    float h = substep_time;
+    SparseMatrix<float> &dfdx = vertex_force_derivatives;
+    SparseMatrix<float> &M = mass_matrix;
+    SparseMatrix<float> &I = identity_matrix;
 
-  //   VectorXd &v0 = vertex_velocities;
-  //   VectorXd &f0 = vertex_forces;
+    VectorXf &v0 = vertex_velocities_eigen;
+    VectorXf &f0 = vertex_forces;
 
-  //   /* Creating the b vector, the right hand side of the linear system. */
-  //   VectorXd b(3 * n_vertices);  // TODO maybe preallocate this memory if needed.
-  //   b = dfdx * v0;
-  //   b *= h;
-  //   b += f0;
-  //   b *= h;
+    /* Creating the b vector, the right hand side of the linear system. */
+    VectorXf b(system_size);  // TODO maybe preallocate this memory if needed.
+    b = h * (f0 + h * (dfdx * v0));
 
-  //   /* Creating the A matrix the left hand side of the linear systems. */
-  //   SparseMatrix<double> &A = dfdx;
-  //   A *= (h * h);
+    VectorXf z(system_size);
+    z.fill(0.0f);
 
-  //   // TODO A = M (diagonal) - A;
-  //   for (int i : IndexRange(n_vertices)) {
-  //     A.coeffRef(i, i) = vertex_masses[i] - A.coeffRef(i, i);
-  //   }
-  // }
+    SparseMatrix<float> S = SparseMatrix<float>(system_size, system_size);
+    Array<Triplet> S_triplets = Array<Triplet>(system_size);
+    for (int i : IndexRange(amount_of_vertices)) {
+      for (int s : IndexRange(3)) {
+        int index = 3 * i + s;
+        float value = 1.0f;
+        if (i == 0) {
+          value = 0.0f;
+        }
+        S_triplets[index] = Triplet(index, index, value);
+      }
+    }
+    S.setFromTriplets(S_triplets.begin(), S_triplets.end());
+
+    /* Creating the A matrix the left hand side of the linear systems. */
+    SparseMatrix<float> A = SparseMatrix<float>(system_size, system_size);
+    A = M - (h * h) * dfdx;
+
+    SparseMatrix<float> ST = SparseMatrix<float>(S.transpose());
+    SparseMatrix<float> LHS = (S * A * ST) + I - S;
+    VectorXf c = b - A * z;
+    VectorXf rhs = S * c;
+
+    Eigen::ConjugateGradient<SparseMatrix<float>> solver;
+    VectorXf y = solver.compute(LHS).solve(rhs);
+
+    VectorXf x = y + z;
+
+    vertex_velocities_eigen += x;
+    vertex_positions_eigen += h * vertex_velocities_eigen;
+
+    for (int i : IndexRange(amount_of_vertices)) {
+      // Make a cleaner interface to get the vertex positions.
+      vertex_positions[i][0] = vertex_positions_eigen[3 * i];
+      vertex_positions[i][1] = vertex_positions_eigen[3 * i + 1];
+      vertex_positions[i][2] = vertex_positions_eigen[3 * i + 2];
+
+      vertex_velocities[i][0] = vertex_velocities_eigen[3 * i];
+      vertex_velocities[i][1] = vertex_velocities_eigen[3 * i + 1];
+      vertex_velocities[i][2] = vertex_velocities_eigen[3 * i + 2];
+    }
+  }
 };
