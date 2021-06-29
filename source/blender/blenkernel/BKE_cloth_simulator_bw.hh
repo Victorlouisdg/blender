@@ -75,6 +75,7 @@ class ClothSimulatorBW {
   Array<DeformationGradient> deformation_gradients;
   Array<GravityForceElement> gravity_force_elements;
   Array<StretchForceElementBW> stretch_force_elements;
+  Array<ShearForceElementBW> shear_force_elements;
 
   /* Global system (Eigen) */
   VectorXf vertex_forces;
@@ -106,6 +107,7 @@ class ClothSimulatorBW {
     vertex_masses = ap.get_vertex_masses();
     triangle_stretch_stiffness_u = ap.get_triangle_stretch_stiffness_u();
     triangle_stretch_stiffness_v = ap.get_triangle_stretch_stiffness_v();
+    triangle_shear_stiffness = ap.get_triangle_shear_stiffness();
     triangle_area_factors = ap.get_triangle_area_factors();
     triangle_inverted_delta_u_matrices = ap.get_triangle_inverted_delta_u_matrices();
     triangle_wu_derivatives = ap.get_triangle_wu_derivatives();
@@ -115,6 +117,7 @@ class ClothSimulatorBW {
     deformation_gradients = Array<DeformationGradient>(amount_of_triangles);
     gravity_force_elements = Array<GravityForceElement>(amount_of_vertices);
     stretch_force_elements = Array<StretchForceElementBW>(amount_of_triangles);
+    shear_force_elements = Array<ShearForceElementBW>(amount_of_triangles);
 
     /* Creating the global matrixs and vectors for the Eigen solver. */
     system_size = 3 * amount_of_vertices;
@@ -191,8 +194,10 @@ class ClothSimulatorBW {
       float kv = triangle_stretch_stiffness_v[ti];
       float3 dwu_dx = triangle_wu_derivatives[ti];
       float3 dwv_dx = triangle_wv_derivatives[ti];
-
       stretch_force_elements[ti].calculate(ku, kv, area_factor, F, dwu_dx, dwv_dx);
+
+      float k_shear = triangle_shear_stiffness[ti];
+      shear_force_elements[ti].calculate(k_shear, area_factor, F, dwu_dx, dwv_dx);
 
       // std::array<float3, 3> &forces = stretch_force_elements[ti].forces;
       // const float red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
@@ -236,15 +241,14 @@ class ClothSimulatorBW {
      * reason: 1) The float3x3 values are stored in column major format. 2) The eigen sparse matrix
      * is not 3x3 blocked.
      */
-    int total_force_derivatives = 9 * 9 * stretch_force_elements.size();
+    int total_force_derivatives = 9 * 9 * stretch_force_elements.size() +
+                                  9 * 9 * shear_force_elements.size();
+
     Array<Triplet> triplets = Array<Triplet>(total_force_derivatives);
     int triplet_index = 0;
 
     for (int ti : IndexRange(stretch_force_elements.size())) {
       int3 vertex_indices = triangle_vertex_indices[ti];
-
-      // std::cout << "Forces on the triangle" << std::endl;
-
       for (int m : IndexRange(3)) {
         int i = vertex_indices[m];
         float3 force = stretch_force_elements[ti].forces[m];
@@ -256,6 +260,24 @@ class ClothSimulatorBW {
           int j = vertex_indices[n];
 
           float3x3 force_derivative = stretch_force_elements[ti].force_derivatives[m][n];
+          insert_triplets_from_float3x3(triplets, triplet_index, force_derivative, i, j);
+        }
+      }
+    }
+
+    for (int ti : IndexRange(shear_force_elements.size())) {
+      int3 vertex_indices = triangle_vertex_indices[ti];
+      for (int m : IndexRange(3)) {
+        int i = vertex_indices[m];
+        float3 force = shear_force_elements[ti].forces[m];
+        vertex_forces[3 * i] += force.x;
+        vertex_forces[3 * i + 1] += force.y;
+        vertex_forces[3 * i + 2] += force.z;
+
+        for (int n : IndexRange(3)) {
+          int j = vertex_indices[n];
+
+          float3x3 force_derivative = shear_force_elements[ti].force_derivatives[m][n];
           insert_triplets_from_float3x3(triplets, triplet_index, force_derivative, i, j);
         }
       }
@@ -298,7 +320,7 @@ class ClothSimulatorBW {
 
   void integrate_implicit_backward_euler()
   {
-    /*First we build the A and b of the linear system Ax = b. Then we use eigen to solve it. */
+    /* First we build the A and b of the linear system Ax = b. Then we use eigen to solve it. */
     float h = substep_time;
     SparseMatrix<float> &dfdx = vertex_force_derivatives;
     SparseMatrix<float> &M = mass_matrix;
@@ -320,7 +342,8 @@ class ClothSimulatorBW {
       for (int s : IndexRange(3)) {
         int index = 3 * i + s;
         float value = 1.0f;
-        if (i == 0) {
+        if (std::find(pinned_vertices.begin(), pinned_vertices.end(), i) !=
+            pinned_vertices.end()) {
           value = 0.0f;
         }
         S_triplets[index] = Triplet(index, index, value);
@@ -344,9 +367,13 @@ class ClothSimulatorBW {
 
     vertex_velocities_eigen += x;
     vertex_positions_eigen += h * vertex_velocities_eigen;
+    copy_eigen_to_blender();
+  }
 
+  // TODO: make a cleaner interface to get the vertex positions & velocities.
+  void copy_eigen_to_blender()
+  {
     for (int i : IndexRange(amount_of_vertices)) {
-      // Make a cleaner interface to get the vertex positions.
       vertex_positions[i][0] = vertex_positions_eigen[3 * i];
       vertex_positions[i][1] = vertex_positions_eigen[3 * i + 1];
       vertex_positions[i][2] = vertex_positions_eigen[3 * i + 2];

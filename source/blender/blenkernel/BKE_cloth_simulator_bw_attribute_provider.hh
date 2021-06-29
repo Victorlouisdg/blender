@@ -264,6 +264,11 @@ class ClothBWAttributeProvider {
     return triangle_stretch_stiffness_v;
   }
 
+  Span<float> get_triangle_shear_stiffness()
+  {
+    return triangle_shear_stiffness;
+  }
+
   Span<float> get_triangle_area_factors()
   {
     return triangle_area_factors;

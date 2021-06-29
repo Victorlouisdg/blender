@@ -82,7 +82,7 @@ class StretchForceElementBW {
       forces[m] += -k * C * dC_dx[m];
     }
 
-    /* Derivatives */
+    /* Force derivatives */
     float3x3 I_w_wT = float3x3::identity() - float3x3::outer(w, w);
 
     for (int m : IndexRange(3)) {
@@ -92,6 +92,45 @@ class StretchForceElementBW {
         float3x3 df_dx_mn = -k * (dC_outer + C * dC_dx_mn);
 
         force_derivatives[m][n] += df_dx_mn;
+      }
+    }
+  }
+};
+
+class ShearForceElementBW {
+ public:
+  array<float3, 3> forces;
+  array<array<float3x3, 3>, 3> force_derivatives;  // float3x3 force_derivatives[3][3];
+
+  /* TODO add second calculate() that calculates the deformation gradient. */
+  void calculate(float k, float area_factor, DeformationGradient F, float3 dwu_dx, float3 dwv_dx)
+  {
+    float3 wu = F.du;
+    float3 wv = F.dv;
+
+    /* Shear condition: section 4.3 in [BW98]. */
+    float C = area_factor * float3::dot(wu, wv);
+
+    array<float3, 3> dC_dx = array<float3, 3>();
+
+    for (int m : IndexRange(3)) {
+      dC_dx[m] = area_factor * (dwu_dx[m] * wv + dwv_dx[m] * wu);
+    }
+
+    for (int m : IndexRange(3)) {
+      forces[m] = -k * C * dC_dx[m];
+    }
+
+    /* Force derivatives */
+    for (int m : IndexRange(3)) {
+      for (int n : IndexRange(3)) {
+        float3x3 dC_dx_mn = area_factor * (dwu_dx[m] * dwv_dx[n] + dwu_dx[n] * dwv_dx[m]) *
+                            float3x3::identity();
+
+        float3x3 dC_outer = float3x3::outer(dC_dx[m], dC_dx[n]);
+        float3x3 df_dx_mn = -k * (dC_outer + C * dC_dx_mn);
+
+        force_derivatives[m][n] = df_dx_mn;
       }
     }
   }
