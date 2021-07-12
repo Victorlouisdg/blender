@@ -5,6 +5,7 @@
 
 #include "BLI_index_range.hh"
 #include "BLI_span.hh"
+#include "BLI_timeit.hh"
 #include "BLI_vector.hh"
 
 #include "DNA_mesh_types.h"
@@ -24,7 +25,10 @@ using blender::Vector;
 
 typedef Eigen::Triplet<float> Triplet;
 
+using Eigen::ConjugateGradient;
+using Eigen::Lower;
 using Eigen::SparseMatrix;
+using Eigen::Upper;
 using Eigen::VectorXf;
 
 class ClothSimulatorBW {
@@ -144,23 +148,38 @@ class ClothSimulatorBW {
   void step()
   {
     std::cout << "step eigen" << std::endl;
+
+    // Eigen::setNbThreads(1);
+    // int n = Eigen::nbThreads();
+    // std::cout << "eigen threads " << n << std::endl;
+
     for (int substep : IndexRange(substeps)) {
       current_substep = substep;
-      calculate_forces_and_derivatives();
-      aggregate_forces_local_to_global();
+      {
+        SCOPED_TIMER("calculate_forces_and_derivatives");
+        calculate_local_forces_and_derivatives();
+      }
 
+      {
+        SCOPED_TIMER("accumulate_local_forces_to_global");
+        accumulate_local_forces_to_global();
+      }
       // if (use_explicit_integration) {
       // integrate_explicit_forward_euler();
       // }
       // else {
-      integrate_implicit_backward_euler();
+      {
+        SCOPED_TIMER("integrate_implicit_backward_euler");
+        integrate_implicit_backward_euler();
+      }
       // }
+
+      std::cout << std::endl;
     }
   }
 
   void initialize_mass_matrix()
   {
-
     mass_matrix = SparseMatrix<float>(system_size, system_size);
 
     Array<Triplet> triplets = Array<Triplet>(system_size);
@@ -173,7 +192,7 @@ class ClothSimulatorBW {
     mass_matrix.setFromTriplets(triplets.begin(), triplets.end());
   }
 
-  void calculate_forces_and_derivatives()
+  void calculate_local_forces_and_derivatives()
   {
     for (int i : IndexRange(amount_of_vertices)) {
       float vertex_mass = vertex_masses[i];
@@ -225,21 +244,48 @@ class ClothSimulatorBW {
     }
   }
 
-  void aggregate_forces_local_to_global()
+  void accumulate_particle_based_force(float3 force, int vertex_index)
   {
-    vertex_forces.fill(0.0f);
+    int i = vertex_index;
+    vertex_forces[3 * i] += force.x;
+    vertex_forces[3 * i + 1] += force.y;
+    vertex_forces[3 * i + 2] += force.z;
+  }
 
-    for (int i : IndexRange(amount_of_vertices)) {
-      float3 force = gravity_force_elements[i].force;
-      /* x and y are always zero so maybe even just remove this? */
+  void accumulate_triangle_based_force(array<float3, 3> &forces,
+                                       array<array<float3x3, 3>, 3> &force_derivatives,
+                                       int3 vertex_indices,
+                                       MutableSpan<Triplet> triplets,
+                                       int &triplet_index)
+  {
+    for (int m : IndexRange(3)) {
+      int i = vertex_indices[m];
+      float3 force = forces[m];
       vertex_forces[3 * i] += force.x;
       vertex_forces[3 * i + 1] += force.y;
       vertex_forces[3 * i + 2] += force.z;
+
+      for (int n : IndexRange(3)) {
+        int j = vertex_indices[n];
+
+        float3x3 force_derivative = force_derivatives[m][n];
+        insert_triplets_from_float3x3(triplets, triplet_index, force_derivative, i, j);
+      }
+    }
+  }
+
+  void accumulate_local_forces_to_global()
+  {
+    vertex_forces.fill(0.0f);
+
+    for (int i : IndexRange(gravity_force_elements.size())) {
+      GravityForceElement element = gravity_force_elements[i];
+      accumulate_particle_based_force(element.force, i);
     }
 
     /* This copying from ForceElements into the Eigen datastructures is a bit awkward for two
-     * reason: 1) The float3x3 values are stored in column major format. 2) The eigen sparse matrix
-     * is not 3x3 blocked.
+     * reason: 1) The float3x3 values are stored in column major format. 2) The eigen sparse
+     * matrix is not 3x3 blocked.
      */
     int total_force_derivatives = 9 * 9 * stretch_force_elements.size() +
                                   9 * 9 * shear_force_elements.size();
@@ -248,39 +294,21 @@ class ClothSimulatorBW {
     int triplet_index = 0;
 
     for (int ti : IndexRange(stretch_force_elements.size())) {
-      int3 vertex_indices = triangle_vertex_indices[ti];
-      for (int m : IndexRange(3)) {
-        int i = vertex_indices[m];
-        float3 force = stretch_force_elements[ti].forces[m];
-        vertex_forces[3 * i] += force.x;
-        vertex_forces[3 * i + 1] += force.y;
-        vertex_forces[3 * i + 2] += force.z;
-
-        for (int n : IndexRange(3)) {
-          int j = vertex_indices[n];
-
-          float3x3 force_derivative = stretch_force_elements[ti].force_derivatives[m][n];
-          insert_triplets_from_float3x3(triplets, triplet_index, force_derivative, i, j);
-        }
-      }
+      StretchForceElementBW element = stretch_force_elements[ti];
+      accumulate_triangle_based_force(element.forces,
+                                      element.force_derivatives,
+                                      triangle_vertex_indices[ti],
+                                      triplets,
+                                      triplet_index);
     }
 
     for (int ti : IndexRange(shear_force_elements.size())) {
-      int3 vertex_indices = triangle_vertex_indices[ti];
-      for (int m : IndexRange(3)) {
-        int i = vertex_indices[m];
-        float3 force = shear_force_elements[ti].forces[m];
-        vertex_forces[3 * i] += force.x;
-        vertex_forces[3 * i + 1] += force.y;
-        vertex_forces[3 * i + 2] += force.z;
-
-        for (int n : IndexRange(3)) {
-          int j = vertex_indices[n];
-
-          float3x3 force_derivative = shear_force_elements[ti].force_derivatives[m][n];
-          insert_triplets_from_float3x3(triplets, triplet_index, force_derivative, i, j);
-        }
-      }
+      ShearForceElementBW element = shear_force_elements[ti];
+      accumulate_triangle_based_force(element.forces,
+                                      element.force_derivatives,
+                                      triangle_vertex_indices[ti],
+                                      triplets,
+                                      triplet_index);
     }
 
     vertex_force_derivatives.setFromTriplets(triplets.begin(), triplets.end());
@@ -360,8 +388,13 @@ class ClothSimulatorBW {
     VectorXf c = b - A * z;
     VectorXf rhs = S * c;
 
-    Eigen::ConjugateGradient<SparseMatrix<float>> solver;
-    VectorXf y = solver.compute(LHS).solve(rhs);
+    ConjugateGradient<SparseMatrix<float>, Lower | Upper> solver;
+
+    VectorXf y;
+    {
+      SCOPED_TIMER("solve");
+      y = solver.compute(LHS).solve(rhs);
+    }
 
     VectorXf x = y + z;
 
