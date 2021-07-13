@@ -88,7 +88,8 @@ TEST(clothbw, Stretch)
   F.calculate(x0, x1, x2, inverted_delta_u);
 
   StretchForceElementBW stretch = StretchForceElementBW();
-  stretch.calculate(1.0f, 1.0f, 1.0f, F, dwu_dx, dwv_dx);
+  stretch.calculate(
+      1.0f, 1.0f, 1.0f, F, dwu_dx, dwv_dx, 0.0f, 0.0f, {float3(0.0f), float3(0.0f), float3(0.0f)});
 
   float3 f0 = stretch.forces[0];
   float3 f1 = stretch.forces[1];

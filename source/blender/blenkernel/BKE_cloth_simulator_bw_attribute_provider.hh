@@ -4,9 +4,6 @@
 #include "BLI_float3.hh"
 #include "BLI_float3x3.hh"
 #include "BLI_index_range.hh"
-#include "BLI_int2.hh"
-#include "BLI_int3.hh"
-#include "BLI_int4.hh"
 #include "BLI_sparse_matrix.hh"
 #include "BLI_vector.hh"
 
@@ -22,15 +19,16 @@
 #include "BKE_lib_query.h"
 #include "BKE_object.h"
 
+typedef std::array<int, 2> int2;
+typedef std::array<int, 3> int3;
+typedef std::array<int, 4> int4;
+
 using blender::Array;
 using blender::float2;
 using blender::float2x2;
 using blender::float3;
 using blender::float3x3;
 using blender::IndexRange;
-using blender::int2;
-using blender::int3;
-using blender::int4;
 using blender::MutableSpan;
 using blender::Span;
 using blender::Vector;
@@ -39,7 +37,7 @@ class ClothBWAttributeProvider {
  private:
   int amount_of_vertices;
   int amount_of_triangles;
-  int amount_of_bending_edges;
+  int amount_of_bend_edges;
 
   /* State */
   Array<float3> vertex_positions;
@@ -48,20 +46,28 @@ class ClothBWAttributeProvider {
   /* Indices */
   Array<int2> spring_vertex_indices;
   Array<int3> triangle_vertex_indices;
-  Array<int4> bending_vertex_indices;
+  Array<int4> bend_vertex_indices;
 
   /* Parameters / Configuration */
   Array<float> vertex_masses;
+
   Array<float> triangle_stretch_stiffness_u;
   Array<float> triangle_stretch_stiffness_v;
   Array<float> triangle_shear_stiffness;
-  Array<float> bending_stiffness;
-  Array<float> bending_rest_lengths;
+  Array<float> bend_stiffness;
+
+  Array<float> triangle_stretch_damping_u;
+  Array<float> triangle_stretch_damping_v;
+  Array<float> triangle_shear_damping;
+  Array<float> bend_damping;
+
   Array<float3> triangle_normals;
   Array<float> triangle_area_factors;
   Array<float2x2> triangle_inverted_delta_u_matrices;
   Array<float3> triangle_wu_derivatives;
   Array<float3> triangle_wv_derivatives;
+
+  Array<float> bend_rest_lengths;
 
   Vector<int> pinned_vertices;
 
@@ -79,7 +85,7 @@ class ClothBWAttributeProvider {
     initialize_vertex_velocities();
     initialize_vertex_masses_uniform(1.0);
     initialize_triangle_attributes(mesh, modifier_data);
-    initialize_bending_attributes(mesh, modifier_data);
+    initialize_bend_attributes(mesh, modifier_data);
     initialize_pinned_vertices(mesh, modifier_data, cloth_object);
   }
 
@@ -96,9 +102,9 @@ class ClothBWAttributeProvider {
     vertex_velocities = Array<float3>(amount_of_vertices, float3(0.0f));
   }
 
-  void initialize_vertex_masses_uniform(double total_mass)
+  void initialize_vertex_masses_uniform(float total_mass)
   {
-    double vertex_mass = total_mass / amount_of_vertices;
+    float vertex_mass = total_mass / amount_of_vertices;
     vertex_masses = Array<float>(amount_of_vertices, vertex_mass);
   }
 
@@ -110,6 +116,13 @@ class ClothBWAttributeProvider {
     triangle_stretch_stiffness_u = Array<float>(amount_of_triangles, md.stretch_stiffness);
     triangle_stretch_stiffness_v = Array<float>(amount_of_triangles, md.stretch_stiffness);
     triangle_shear_stiffness = Array<float>(amount_of_triangles, md.shear_stiffness);
+
+    float stretch_damping = md.stretch_stiffness * md.stretch_damping_factor;
+    float shear_damping = md.shear_stiffness * md.shear_damping_factor;
+
+    triangle_stretch_damping_u = Array<float>(amount_of_triangles, stretch_damping);
+    triangle_stretch_damping_v = Array<float>(amount_of_triangles, stretch_damping);
+    triangle_shear_damping = Array<float>(amount_of_triangles, shear_damping);
 
     triangle_vertex_indices = Array<int3>(amount_of_triangles);
     triangle_normals = Array<float3>(amount_of_triangles);
@@ -148,7 +161,7 @@ class ClothBWAttributeProvider {
       const float3 v1_pos = vertex_positions[v1_index];
       const float3 v2_pos = vertex_positions[v2_index];
 
-      triangle_vertex_indices[looptri_index] = int3(v0_index, v1_index, v2_index);
+      triangle_vertex_indices[looptri_index] = int3({v0_index, v1_index, v2_index});
 
       const float3 normal = float3::cross(v1_pos - v0_pos, v2_pos - v0_pos);
       triangle_normals[looptri_index] = normal;
@@ -204,7 +217,7 @@ class ClothBWAttributeProvider {
     return {inverted_delta_u, dwu_dx, dwv_dx};
   }
 
-  void initialize_bending_attributes(const Mesh &mesh, const ClothBWModifierData &md)
+  void initialize_bend_attributes(const Mesh &mesh, const ClothBWModifierData &md)
   {
     /* Maps from the 2 vertices of a looptri edge to an oppossing vertex. */
     std::multimap<std::pair<int, int>, int> looptri_edge_opposing_vertices =
@@ -221,7 +234,7 @@ class ClothBWAttributeProvider {
       const int v1_index = mesh.mloop[v1_loop].v;
       const int v2_index = mesh.mloop[v2_loop].v;
 
-      /* Bending edges. */
+      /* bend edges. */
       looptri_edge_opposing_vertices.insert(
           std::pair<std::pair<int, int>, int>(std::minmax(v0_index, v1_index), v2_index));
       looptri_edge_opposing_vertices.insert(
@@ -230,11 +243,11 @@ class ClothBWAttributeProvider {
           std::pair<std::pair<int, int>, int>(std::minmax(v1_index, v2_index), v0_index));
     }
 
-    Vector<int4> bending_indices_vector = Vector<int4>();
-    Vector<float> bending_rest_lengths_vector = Vector<float>();
+    Vector<int4> bend_indices_vector = Vector<int4>();
+    Vector<float> bend_rest_lengths_vector = Vector<float>();
 
     /* Here we need to check which looptri edges have 2 opposing vertices, these edges will
-     * become bending edges. */
+     * become bend edges. */
     for (std::multimap<std::pair<int, int>, int>::iterator it =
              looptri_edge_opposing_vertices.begin();
          it != looptri_edge_opposing_vertices.end();
@@ -253,20 +266,23 @@ class ClothBWAttributeProvider {
         std::pair<int, int> edge_next = it_next->first;
         if (edge == edge_next) { /* This means two looptris share this edge. */
           int v3 = it_next->second;
-          bending_indices_vector.append(int4(v0, v1, v2, v3));
+          bend_indices_vector.append(int4({v0, v1, v2, v3}));
           float3 x0 = vertex_positions[v0];
           float3 x3 = vertex_positions[v3];
           float rest_length = (x3 - x0).length();
-          bending_rest_lengths_vector.append(rest_length);
+          bend_rest_lengths_vector.append(rest_length);
         }
       }
     }
 
-    amount_of_bending_edges = bending_indices_vector.size();
+    amount_of_bend_edges = bend_indices_vector.size();
 
-    bending_vertex_indices = Array<int4>(bending_indices_vector.as_span());
-    bending_rest_lengths = Array<float>(bending_rest_lengths_vector.as_span());
-    bending_stiffness = Array<float>(amount_of_bending_edges, md.bending_stiffness);
+    bend_vertex_indices = Array<int4>(bend_indices_vector.as_span());
+    bend_rest_lengths = Array<float>(bend_rest_lengths_vector.as_span());
+    bend_stiffness = Array<float>(amount_of_bend_edges, md.bend_stiffness);
+
+    float bend_damping_value = md.bend_stiffness * md.bend_damping_factor;
+    bend_damping = Array<float>(amount_of_bend_edges, bend_damping_value);
   }
 
   void initialize_pinned_vertices(const Mesh &mesh,
@@ -301,9 +317,9 @@ class ClothBWAttributeProvider {
     return amount_of_triangles;
   }
 
-  int get_amount_of_bending_edges()
+  int get_amount_of_bend_edges()
   {
-    return amount_of_bending_edges;
+    return amount_of_bend_edges;
   }
 
   MutableSpan<float3> get_vertex_positions()
@@ -336,6 +352,31 @@ class ClothBWAttributeProvider {
     return triangle_shear_stiffness;
   }
 
+  Span<float> get_bend_stiffness()
+  {
+    return bend_stiffness;
+  }
+
+  Span<float> get_triangle_stretch_damping_u()
+  {
+    return triangle_stretch_damping_u;
+  }
+
+  Span<float> get_triangle_stretch_damping_v()
+  {
+    return triangle_stretch_damping_v;
+  }
+
+  Span<float> get_triangle_shear_damping()
+  {
+    return triangle_shear_damping;
+  }
+
+  Span<float> get_bend_damping()
+  {
+    return bend_damping;
+  }
+
   Span<float> get_triangle_area_factors()
   {
     return triangle_area_factors;
@@ -361,19 +402,14 @@ class ClothBWAttributeProvider {
     return triangle_vertex_indices;
   }
 
-  Span<int4> get_bending_vertex_indices()
+  Span<int4> get_bend_vertex_indices()
   {
-    return bending_vertex_indices;
+    return bend_vertex_indices;
   }
 
-  Span<float> get_bending_stiffness()
+  Span<float> get_bend_rest_lengths()
   {
-    return bending_stiffness;
-  }
-
-  Span<float> get_bending_rest_lengths()
-  {
-    return bending_rest_lengths;
+    return bend_rest_lengths;
   }
 
   Vector<int> get_pinned_vertices()

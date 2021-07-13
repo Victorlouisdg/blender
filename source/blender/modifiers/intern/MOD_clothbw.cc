@@ -60,20 +60,20 @@ static void initData(ModifierData *md)
 
   d->stretch_stiffness = 200.0f;
   d->shear_stiffness = 50.0f;
-  d->bending_stiffness = 0.01f;
+  d->bend_stiffness = 0.01f;
   d->spring_stiffness = 2000.0f;
 
   d->stretch_damping_factor = 0.1f;
   d->shear_damping_factor = 0.1f;
-  d->bending_damping_factor = 0.1f;
+  d->bend_damping_factor = 0.1f;
   d->spring_damping_factor = 0.1f;
 
   d->enable_shear = true;
-  d->enable_bending = true;
+  d->enable_bend = true;
 
   d->damp_stretch = true;
   d->damp_shear = true;
-  d->damp_bending = true;
+  d->damp_bend = true;
   d->damp_springs = true;
 
   d->use_explicit_integration = false;
@@ -122,20 +122,20 @@ static void panel_draw(const bContext *UNUSED(C), Panel *panel)
 
     uiItemR(layout, ptr, "stretch_stiffness", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "shear_stiffness", 0, NULL, ICON_NONE);
-    uiItemR(layout, ptr, "bending_stiffness", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "bend_stiffness", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "spring_stiffness", 0, NULL, ICON_NONE);
 
     uiItemR(layout, ptr, "stretch_damping_factor", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "shear_damping_factor", 0, NULL, ICON_NONE);
-    uiItemR(layout, ptr, "bending_damping_factor", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "bend_damping_factor", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "spring_damping_factor", 0, NULL, ICON_NONE);
 
     uiItemR(layout, ptr, "enable_shear", 0, NULL, ICON_NONE);
-    uiItemR(layout, ptr, "enable_bending", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "enable_bend", 0, NULL, ICON_NONE);
 
     uiItemR(layout, ptr, "damp_stretch", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "damp_shear", 0, NULL, ICON_NONE);
-    uiItemR(layout, ptr, "damp_bending", 0, NULL, ICON_NONE);
+    uiItemR(layout, ptr, "damp_bend", 0, NULL, ICON_NONE);
     uiItemR(layout, ptr, "damp_springs", 0, NULL, ICON_NONE);
 
     uiItemR(layout, ptr, "use_explicit_integration", 0, NULL, ICON_NONE);
