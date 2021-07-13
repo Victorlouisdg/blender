@@ -74,7 +74,7 @@ struct float3x3 {
 
   static float3x3 skew(const float3 v)
   {
-    float values[3][3] = {{0.0f, v[2], -v[1]}, {-v[2], 0.0f, v[0]}, {v[1], -v[0], 0.0f}};
+    float values[3][3] = {{0.0f, v.z, -v.y}, {-v.z, 0.0f, v.x}, {v.y, -v.x, 0.0f}};
     return float3x3(values);
   }
 
@@ -191,7 +191,6 @@ struct float3x3 {
 };
 
 }  // namespace blender
-
 
 static std::ostream &operator<<(std::ostream &os, blender::float3x3 const &m);
 

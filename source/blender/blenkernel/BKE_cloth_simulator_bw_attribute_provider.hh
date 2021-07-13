@@ -39,6 +39,7 @@ class ClothBWAttributeProvider {
  private:
   int amount_of_vertices;
   int amount_of_triangles;
+  int amount_of_bending_edges;
 
   /* State */
   Array<float3> vertex_positions;
@@ -78,7 +79,7 @@ class ClothBWAttributeProvider {
     initialize_vertex_velocities();
     initialize_vertex_masses_uniform(1.0);
     initialize_triangle_attributes(mesh, modifier_data);
-    // initialize_bending_attributes(mesh, modifier_data);
+    initialize_bending_attributes(mesh, modifier_data);
     initialize_pinned_vertices(mesh, modifier_data, cloth_object);
   }
 
@@ -203,9 +204,70 @@ class ClothBWAttributeProvider {
     return {inverted_delta_u, dwu_dx, dwv_dx};
   }
 
-  // void initialize_bending_attributes(const Mesh &mesh, const ClothBWModifierData &md)
-  // {
-  // }
+  void initialize_bending_attributes(const Mesh &mesh, const ClothBWModifierData &md)
+  {
+    /* Maps from the 2 vertices of a looptri edge to an oppossing vertex. */
+    std::multimap<std::pair<int, int>, int> looptri_edge_opposing_vertices =
+        std::multimap<std::pair<int, int>, int>();
+
+    Span<MLoopTri> looptris = get_mesh_looptris(mesh);
+
+    for (const int looptri_index : looptris.index_range()) {
+      const MLoopTri &looptri = looptris[looptri_index];
+      const int v0_loop = looptri.tri[0];
+      const int v1_loop = looptri.tri[1];
+      const int v2_loop = looptri.tri[2];
+      const int v0_index = mesh.mloop[v0_loop].v;
+      const int v1_index = mesh.mloop[v1_loop].v;
+      const int v2_index = mesh.mloop[v2_loop].v;
+
+      /* Bending edges. */
+      looptri_edge_opposing_vertices.insert(
+          std::pair<std::pair<int, int>, int>(std::minmax(v0_index, v1_index), v2_index));
+      looptri_edge_opposing_vertices.insert(
+          std::pair<std::pair<int, int>, int>(std::minmax(v0_index, v2_index), v1_index));
+      looptri_edge_opposing_vertices.insert(
+          std::pair<std::pair<int, int>, int>(std::minmax(v1_index, v2_index), v0_index));
+    }
+
+    Vector<int4> bending_indices_vector = Vector<int4>();
+    Vector<float> bending_rest_lengths_vector = Vector<float>();
+
+    /* Here we need to check which looptri edges have 2 opposing vertices, these edges will
+     * become bending edges. */
+    for (std::multimap<std::pair<int, int>, int>::iterator it =
+             looptri_edge_opposing_vertices.begin();
+         it != looptri_edge_opposing_vertices.end();
+         it++) {
+      std::pair<int, int> edge = it->first;
+
+      /* Note that indices of the shared edge are stored in position 1 and 2, this is the
+       * convention used in the "Implementing Baraff Wikin" by David Pritchard. */
+      int v0 = it->second;
+      int v1 = edge.first;
+      int v2 = edge.second;
+
+      std::multimap<std::pair<int, int>, int>::iterator it_next = std::next(it, 1);
+
+      if (it_next != looptri_edge_opposing_vertices.end()) {
+        std::pair<int, int> edge_next = it_next->first;
+        if (edge == edge_next) { /* This means two looptris share this edge. */
+          int v3 = it_next->second;
+          bending_indices_vector.append(int4(v0, v1, v2, v3));
+          float3 x0 = vertex_positions[v0];
+          float3 x3 = vertex_positions[v3];
+          float rest_length = (x3 - x0).length();
+          bending_rest_lengths_vector.append(rest_length);
+        }
+      }
+    }
+
+    amount_of_bending_edges = bending_indices_vector.size();
+
+    bending_vertex_indices = Array<int4>(bending_indices_vector.as_span());
+    bending_rest_lengths = Array<float>(bending_rest_lengths_vector.as_span());
+    bending_stiffness = Array<float>(amount_of_bending_edges, md.bending_stiffness);
+  }
 
   void initialize_pinned_vertices(const Mesh &mesh,
                                   const ClothBWModifierData &md,
@@ -237,6 +299,11 @@ class ClothBWAttributeProvider {
   int get_amount_of_triangles()
   {
     return amount_of_triangles;
+  }
+
+  int get_amount_of_bending_edges()
+  {
+    return amount_of_bending_edges;
   }
 
   MutableSpan<float3> get_vertex_positions()
@@ -292,6 +359,21 @@ class ClothBWAttributeProvider {
   Span<int3> get_triangle_vertex_indices()
   {
     return triangle_vertex_indices;
+  }
+
+  Span<int4> get_bending_vertex_indices()
+  {
+    return bending_vertex_indices;
+  }
+
+  Span<float> get_bending_stiffness()
+  {
+    return bending_stiffness;
+  }
+
+  Span<float> get_bending_rest_lengths()
+  {
+    return bending_rest_lengths;
   }
 
   Vector<int> get_pinned_vertices()

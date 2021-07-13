@@ -42,6 +42,7 @@ class ClothSimulatorBW {
 
   int amount_of_vertices;
   int amount_of_triangles;
+  int amount_of_bending_edges;
   int system_size;
 
   float standard_gravity = -9.81f; /* in m/s^2 */
@@ -55,19 +56,19 @@ class ClothSimulatorBW {
 
   MutableSpan<float3> vertex_positions;
   MutableSpan<float3> vertex_velocities;
-  /* Read-Only Attributes, eventually provided by e.g. Geometry Nodes */
 
+  /* Read-Only Attributes, eventually provided by e.g. Geometry Nodes */
   Span<float> vertex_masses;
   Span<float> triangle_stretch_stiffness_u;
   Span<float> triangle_stretch_stiffness_v;
   Span<float> triangle_shear_stiffness;
-  Span<float> bending_stiffness;
-  Span<float> bending_rest_lengths;
   Span<float3> triangle_normals;
   Span<float> triangle_area_factors;
   Span<float2x2> triangle_inverted_delta_u_matrices;
   Span<float3> triangle_wu_derivatives;
   Span<float3> triangle_wv_derivatives;
+  Span<float> bending_stiffness;
+  Span<float> bending_rest_lengths;
 
   Vector<int> pinned_vertices;
 
@@ -80,6 +81,7 @@ class ClothSimulatorBW {
   Array<GravityForceElement> gravity_force_elements;
   Array<StretchForceElementBW> stretch_force_elements;
   Array<ShearForceElementBW> shear_force_elements;
+  Array<BendingForceElementBW> bending_force_elements;
 
   /* Global system (Eigen) */
   VectorXf vertex_forces;
@@ -92,7 +94,7 @@ class ClothSimulatorBW {
                   const Object &cloth_object)
   {
     substeps = modifier_data.n_substeps;
-    step_time = 1.0f / 30.0f; /* Currently assuming 30 fps. */
+    step_time = 1.0f / 24.0f; /* Currently assuming 24 fps. */
     substep_time = step_time / substeps;
 
     use_explicit_integration = modifier_data.use_explicit_integration;
@@ -100,8 +102,10 @@ class ClothSimulatorBW {
     ap = ClothBWAttributeProvider(mesh, modifier_data, cloth_object);
     amount_of_vertices = ap.get_amount_of_vertices();
     amount_of_triangles = ap.get_amount_of_triangles();
+    amount_of_bending_edges = ap.get_amount_of_bending_edges();
 
     triangle_vertex_indices = ap.get_triangle_vertex_indices();
+    bending_vertex_indices = ap.get_bending_vertex_indices();
 
     pinned_vertices = ap.get_pinned_vertices();
 
@@ -116,12 +120,15 @@ class ClothSimulatorBW {
     triangle_inverted_delta_u_matrices = ap.get_triangle_inverted_delta_u_matrices();
     triangle_wu_derivatives = ap.get_triangle_wu_derivatives();
     triangle_wv_derivatives = ap.get_triangle_wv_derivatives();
+    bending_stiffness = ap.get_bending_stiffness();
+    bending_rest_lengths = ap.get_bending_rest_lengths();
 
     /* Creating the local storage for the forces. */
     deformation_gradients = Array<DeformationGradient>(amount_of_triangles);
     gravity_force_elements = Array<GravityForceElement>(amount_of_vertices);
     stretch_force_elements = Array<StretchForceElementBW>(amount_of_triangles);
     shear_force_elements = Array<ShearForceElementBW>(amount_of_triangles);
+    bending_force_elements = Array<BendingForceElementBW>(amount_of_bending_edges);
 
     /* Creating the global matrixs and vectors for the Eigen solver. */
     system_size = 3 * amount_of_vertices;
@@ -228,90 +235,16 @@ class ClothSimulatorBW {
       //   DRW_debug_line_v3v3(x2, x2 + forces[2], blue);
       // }
     }
-  }
 
-  void insert_triplets_from_float3x3(
-      MutableSpan<Triplet> triplets, int &triplet_index, float3x3 force_derivative, int i, int j)
-  {
-    for (int s : IndexRange(3)) {
-      for (int t : IndexRange(3)) {
-        /* Note the inversion of indices s and t, this is because blender
-         * matrices are stored in column major format. */
-        Triplet triplet = Triplet(3 * i + s, 3 * j + t, force_derivative.values[t][s]);
-        triplets[triplet_index] = triplet;
-        triplet_index++;
-      }
+    for (int bi : IndexRange(amount_of_bending_edges)) {
+      int4 vertex_indices = bending_vertex_indices[bi];
+      float3 x0 = vertex_positions[vertex_indices[0]];
+      float3 x1 = vertex_positions[vertex_indices[1]];
+      float3 x2 = vertex_positions[vertex_indices[2]];
+      float3 x3 = vertex_positions[vertex_indices[3]];
+      float k = bending_stiffness[bi];
+      bending_force_elements[bi].calculate(k, x0, x1, x2, x3);
     }
-  }
-
-  void accumulate_particle_based_force(float3 force, int vertex_index)
-  {
-    int i = vertex_index;
-    vertex_forces[3 * i] += force.x;
-    vertex_forces[3 * i + 1] += force.y;
-    vertex_forces[3 * i + 2] += force.z;
-  }
-
-  void accumulate_triangle_based_force(array<float3, 3> &forces,
-                                       array<array<float3x3, 3>, 3> &force_derivatives,
-                                       int3 vertex_indices,
-                                       MutableSpan<Triplet> triplets,
-                                       int &triplet_index)
-  {
-    for (int m : IndexRange(3)) {
-      int i = vertex_indices[m];
-      float3 force = forces[m];
-      vertex_forces[3 * i] += force.x;
-      vertex_forces[3 * i + 1] += force.y;
-      vertex_forces[3 * i + 2] += force.z;
-
-      for (int n : IndexRange(3)) {
-        int j = vertex_indices[n];
-
-        float3x3 force_derivative = force_derivatives[m][n];
-        insert_triplets_from_float3x3(triplets, triplet_index, force_derivative, i, j);
-      }
-    }
-  }
-
-  void accumulate_local_forces_to_global()
-  {
-    vertex_forces.fill(0.0f);
-
-    for (int i : IndexRange(gravity_force_elements.size())) {
-      GravityForceElement element = gravity_force_elements[i];
-      accumulate_particle_based_force(element.force, i);
-    }
-
-    /* This copying from ForceElements into the Eigen datastructures is a bit awkward for two
-     * reason: 1) The float3x3 values are stored in column major format. 2) The eigen sparse
-     * matrix is not 3x3 blocked.
-     */
-    int total_force_derivatives = 9 * 9 * stretch_force_elements.size() +
-                                  9 * 9 * shear_force_elements.size();
-
-    Array<Triplet> triplets = Array<Triplet>(total_force_derivatives);
-    int triplet_index = 0;
-
-    for (int ti : IndexRange(stretch_force_elements.size())) {
-      StretchForceElementBW element = stretch_force_elements[ti];
-      accumulate_triangle_based_force(element.forces,
-                                      element.force_derivatives,
-                                      triangle_vertex_indices[ti],
-                                      triplets,
-                                      triplet_index);
-    }
-
-    for (int ti : IndexRange(shear_force_elements.size())) {
-      ShearForceElementBW element = shear_force_elements[ti];
-      accumulate_triangle_based_force(element.forces,
-                                      element.force_derivatives,
-                                      triangle_vertex_indices[ti],
-                                      triplets,
-                                      triplet_index);
-    }
-
-    vertex_force_derivatives.setFromTriplets(triplets.begin(), triplets.end());
   }
 
   void integrate_explicit_forward_euler()
@@ -327,23 +260,10 @@ class ClothSimulatorBW {
       vertex_accelerations.segment(3 * i, 3).setZero();
     }
 
-    for (int i : IndexRange(amount_of_vertices)) {
-      vertex_velocities_eigen.segment(3 * i, 3) += vertex_accelerations.segment(3 * i, 3) *
-                                                   substep_time;
-      vertex_positions_eigen.segment(3 * i, 3) += vertex_velocities_eigen.segment(3 * i, 3) *
-                                                  substep_time;
-    }
+    vertex_velocities_eigen += substep_time * vertex_accelerations;
+    vertex_positions_eigen += substep_time * vertex_velocities_eigen;
 
-    for (int i : IndexRange(amount_of_vertices)) {
-      // Make a cleaner interface to get the vertex positions.
-      vertex_positions[i][0] = vertex_positions_eigen[3 * i];
-      vertex_positions[i][1] = vertex_positions_eigen[3 * i + 1];
-      vertex_positions[i][2] = vertex_positions_eigen[3 * i + 2];
-
-      vertex_velocities[i][0] = vertex_velocities_eigen[3 * i];
-      vertex_velocities[i][1] = vertex_velocities_eigen[3 * i + 1];
-      vertex_velocities[i][2] = vertex_velocities_eigen[3 * i + 2];
-    }
+    copy_eigen_to_blender();
   }
 
   void integrate_implicit_backward_euler()
@@ -415,5 +335,126 @@ class ClothSimulatorBW {
       vertex_velocities[i][1] = vertex_velocities_eigen[3 * i + 1];
       vertex_velocities[i][2] = vertex_velocities_eigen[3 * i + 2];
     }
+  }
+
+  /* Code for accumulating the locally calculated force elements into the global Eigen system.*/
+  void insert_triplets_from_float3x3(
+      MutableSpan<Triplet> triplets, int &triplet_index, float3x3 force_derivative, int i, int j)
+  {
+    for (int s : IndexRange(3)) {
+      for (int t : IndexRange(3)) {
+        /* Note the inversion of indices s and t, this is because blender
+         * matrices are stored in column major format. */
+        Triplet triplet = Triplet(3 * i + s, 3 * j + t, force_derivative.values[t][s]);
+        triplets[triplet_index] = triplet;
+        triplet_index++;
+      }
+    }
+  }
+
+  void accumulate_particle_based_force(float3 force, int vertex_index)
+  {
+    int i = vertex_index;
+    vertex_forces[3 * i] += force.x;
+    vertex_forces[3 * i + 1] += force.y;
+    vertex_forces[3 * i + 2] += force.z;
+  }
+
+  void accumulate_triangle_based_force(array<float3, 3> &forces,
+                                       array<array<float3x3, 3>, 3> &force_derivatives,
+                                       int3 vertex_indices,
+                                       MutableSpan<Triplet> triplets,
+                                       int &triplet_index)
+  {
+    /* This copying from ForceElements into the Eigen datastructures is a bit awkward for two
+     * reasons: 1) The float3x3 values are stored in column major format. 2) The eigen sparse
+     * matrix is not 3x3 blocked.
+     */
+    for (int m : IndexRange(3)) {
+      int i = vertex_indices[m];
+      float3 force = forces[m];
+      vertex_forces[3 * i] += force.x;
+      vertex_forces[3 * i + 1] += force.y;
+      vertex_forces[3 * i + 2] += force.z;
+
+      for (int n : IndexRange(3)) {
+        int j = vertex_indices[n];
+
+        float3x3 force_derivative = force_derivatives[m][n];
+        insert_triplets_from_float3x3(triplets, triplet_index, force_derivative, i, j);
+      }
+    }
+  }
+
+  void accumulate_bending_edge_based_force(array<float3, 4> &forces,
+                                           array<array<float3x3, 4>, 4> &force_derivatives,
+                                           int4 vertex_indices,
+                                           MutableSpan<Triplet> triplets,
+                                           int &triplet_index)
+  {
+    /* This copying from ForceElements into the Eigen datastructures is a bit awkward for two
+     * reasons: 1) The float3x3 values are stored in column major format. 2) The eigen sparse
+     * matrix is not 3x3 blocked.
+     */
+    for (int m : IndexRange(4)) {
+      int i = vertex_indices[m];
+      float3 force = forces[m];
+      vertex_forces[3 * i] += force.x;
+      vertex_forces[3 * i + 1] += force.y;
+      vertex_forces[3 * i + 2] += force.z;
+
+      for (int n : IndexRange(4)) {
+        int j = vertex_indices[n];
+
+        float3x3 force_derivative = force_derivatives[m][n];
+        insert_triplets_from_float3x3(triplets, triplet_index, force_derivative, i, j);
+      }
+    }
+  }
+
+  void accumulate_local_forces_to_global()
+  {
+    vertex_forces.fill(0.0f);
+
+    for (int i : IndexRange(gravity_force_elements.size())) {
+      GravityForceElement element = gravity_force_elements[i];
+      accumulate_particle_based_force(element.force, i);
+    }
+
+    int total_force_derivatives = 9 * 9 * stretch_force_elements.size() +
+                                  9 * 9 * shear_force_elements.size() +
+                                  12 * 12 * bending_force_elements.size();
+
+    Array<Triplet> triplets = Array<Triplet>(total_force_derivatives);
+    int triplet_index = 0;
+
+    for (int ti : IndexRange(stretch_force_elements.size())) {
+      StretchForceElementBW element = stretch_force_elements[ti];
+      accumulate_triangle_based_force(element.forces,
+                                      element.force_derivatives,
+                                      triangle_vertex_indices[ti],
+                                      triplets,
+                                      triplet_index);
+    }
+
+    for (int ti : IndexRange(shear_force_elements.size())) {
+      ShearForceElementBW element = shear_force_elements[ti];
+      accumulate_triangle_based_force(element.forces,
+                                      element.force_derivatives,
+                                      triangle_vertex_indices[ti],
+                                      triplets,
+                                      triplet_index);
+    }
+
+    for (int bi : IndexRange(bending_force_elements.size())) {
+      BendingForceElementBW element = bending_force_elements[bi];
+      accumulate_bending_edge_based_force(element.forces,
+                                          element.force_derivatives,
+                                          bending_vertex_indices[bi],
+                                          triplets,
+                                          triplet_index);
+    }
+
+    vertex_force_derivatives.setFromTriplets(triplets.begin(), triplets.end());
   }
 };
