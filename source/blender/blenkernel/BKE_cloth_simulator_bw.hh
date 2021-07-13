@@ -285,13 +285,13 @@ class ClothSimulatorBW {
       float3 x2 = vertex_positions[vertex_indices[2]];
       float3 x3 = vertex_positions[vertex_indices[3]];
       float k = bend_stiffness[bi];
-      float kd = bend_stiffness[bi];
+      float kd = bend_damping[bi];
 
       float3 v0 = vertex_velocities[vertex_indices[0]];
       float3 v1 = vertex_velocities[vertex_indices[1]];
       float3 v2 = vertex_velocities[vertex_indices[2]];
       float3 v3 = vertex_velocities[vertex_indices[3]];
-      array<float3, 4> velocities = {v0, v1, v2};
+      array<float3, 4> velocities = {v0, v1, v2, v3};
 
       bend_force_elements[bi].calculate(k, x0, x1, x2, x3, kd, velocities);
     }
