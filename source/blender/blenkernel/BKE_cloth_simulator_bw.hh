@@ -105,8 +105,8 @@ class ClothSimulatorBW {
   SparseMatrix<float> identity_matrix;
 
   /* These vectors of Triplets are used to initialize the corresponding SparseMatrices. */
-  std::vector<Triplet> force_derivative_triplets;
-  std::vector<Triplet> force_velocity_derivative_triplets;
+  Array<Triplet> force_derivative_triplets;
+  Array<Triplet> force_velocity_derivative_triplets;
 
   void initialize(const Mesh &mesh,
                   const ClothBWModifierData &modifier_data,
@@ -188,12 +188,11 @@ class ClothSimulatorBW {
 
     int amount_of_force_derivative_elements = 9 * 9 * stretch_force_elements.size() +
                                               9 * 9 * shear_force_elements.size() +
-                                              12 * 12 * bend_force_elements.size();
+                                              12 * 12 * bend_force_elements.size() +
+                                              6 * 6 * spring_force_elements.size();
 
-    force_derivative_triplets = std::vector<Triplet>();
-    force_velocity_derivative_triplets = std::vector<Triplet>();
-    force_derivative_triplets.reserve(amount_of_force_derivative_elements);
-    force_velocity_derivative_triplets.reserve(amount_of_force_derivative_elements);
+    force_derivative_triplets = Array<Triplet>(amount_of_force_derivative_elements);
+    force_velocity_derivative_triplets = Array<Triplet>(amount_of_force_derivative_elements);
   }
 
   void step()
@@ -423,15 +422,14 @@ class ClothSimulatorBW {
   }
 
   /* Code for accumulating the locally calculated force elements into the global Eigen system.*/
-  void insert_float3x3_as_triplets(const float3x3 &matrix,
-                                   std::vector<Triplet> &triplets,
-                                   int i,
-                                   int j)
+  void insert_float3x3_as_triplets(
+      const float3x3 &matrix, Array<Triplet> &triplets, int i, int j, int index)
   {
     for (int s : IndexRange(3)) {
       for (int t : IndexRange(3)) {
         Triplet triplet = Triplet(3 * i + s, 3 * j + t, matrix.values[t][s]);
-        triplets.push_back(triplet);
+        int triplet_index = index + s * 3 + t;
+        triplets[triplet_index] = triplet;
       }
     }
   }
@@ -449,7 +447,8 @@ class ClothSimulatorBW {
       const array<float3, n_vertices> &forces,
       const array<array<float3x3, n_vertices>, n_vertices> &force_derivatives,
       const array<array<float3x3, n_vertices>, n_vertices> &force_velocity_derivatives,
-      const array<int, n_vertices> &vertex_indices)
+      const array<int, n_vertices> &vertex_indices,
+      const int triplet_index)
   {
     for (int m : IndexRange(n_vertices)) {
       int i = vertex_indices[m];
@@ -460,61 +459,90 @@ class ClothSimulatorBW {
 
       for (int n : IndexRange(n_vertices)) {
         int j = vertex_indices[n];
-        insert_float3x3_as_triplets(force_derivatives[m][n], force_derivative_triplets, i, j);
+        int index = triplet_index + 9 * (m * n_vertices + n);
         insert_float3x3_as_triplets(
-            force_velocity_derivatives[m][n], force_velocity_derivative_triplets, i, j);
+            force_derivatives[m][n], force_derivative_triplets, i, j, index);
+        insert_float3x3_as_triplets(
+            force_velocity_derivatives[m][n], force_velocity_derivative_triplets, i, j, index);
       }
     }
   }
 
   void accumulate_local_forces_to_global()
   {
-    vertex_forces.fill(0.0f);
+    {
+      SCOPED_TIMER("parallel accumulate");
+      vertex_forces.fill(0.0f);
 
-    for (int i : IndexRange(gravity_force_elements.size())) {
-      GravityForceElement element = gravity_force_elements[i];
-      accumulate_particle_based_force(element.force, i);
+      const int chunk_size = 512;
+
+      parallel_for(IndexRange(gravity_force_elements.size()), chunk_size, [&](IndexRange range) {
+        for (int i : range) {
+          GravityForceElement element = gravity_force_elements[i];
+          accumulate_particle_based_force(element.force, i);
+        }
+      });
+
+      int triplet_index = 0;
+
+      parallel_for(IndexRange(stretch_force_elements.size()), chunk_size, [&](IndexRange range) {
+        for (int ti : range) {
+          StretchForceElementBW element = stretch_force_elements[ti];
+          accumulate_element<3>(element.forces,
+                                element.force_derivatives,
+                                element.force_velocity_derivatives,
+                                triangle_vertex_indices[ti],
+                                triplet_index + 81 * ti);
+        }
+      });
+
+      triplet_index += 81 * stretch_force_elements.size();
+
+      parallel_for(IndexRange(shear_force_elements.size()), chunk_size, [&](IndexRange range) {
+        for (int ti : range) {
+          ShearForceElementBW element = shear_force_elements[ti];
+          accumulate_element<3>(element.forces,
+                                element.force_derivatives,
+                                element.force_velocity_derivatives,
+                                triangle_vertex_indices[ti],
+                                triplet_index + 81 * ti);
+        }
+      });
+
+      triplet_index += 81 * shear_force_elements.size();
+
+      parallel_for(IndexRange(bend_force_elements.size()), chunk_size, [&](IndexRange range) {
+        for (int bi : range) {
+          BendForceElementBW element = bend_force_elements[bi];
+          accumulate_element<4>(element.forces,
+                                element.force_derivatives,
+                                element.force_velocity_derivatives,
+                                bend_vertex_indices[bi],
+                                triplet_index + 144 * bi);
+        }
+      });
+
+      triplet_index += 144 * shear_force_elements.size();
+
+      parallel_for(IndexRange(spring_force_elements.size()), chunk_size, [&](IndexRange range) {
+        for (int si : range) {
+          SpringForceElement element = spring_force_elements[si];
+          accumulate_element<2>(element.forces,
+                                element.force_derivatives,
+                                element.force_velocity_derivatives,
+                                spring_vertex_indices[si],
+                                triplet_index + 36 * si);
+        }
+      });
     }
 
-    force_derivative_triplets.clear();
-    force_velocity_derivative_triplets.clear();
+    {
+      SCOPED_TIMER("Eigen: setFromTriplets");
+      vertex_force_derivatives.setFromTriplets(force_derivative_triplets.begin(),
+                                               force_derivative_triplets.end());
 
-    for (int ti : IndexRange(stretch_force_elements.size())) {
-      StretchForceElementBW element = stretch_force_elements[ti];
-      accumulate_element<3>(element.forces,
-                            element.force_derivatives,
-                            element.force_velocity_derivatives,
-                            triangle_vertex_indices[ti]);
+      vertex_force_velocity_derivatives.setFromTriplets(force_velocity_derivative_triplets.begin(),
+                                                        force_velocity_derivative_triplets.end());
     }
-
-    for (int ti : IndexRange(shear_force_elements.size())) {
-      ShearForceElementBW element = shear_force_elements[ti];
-      accumulate_element<3>(element.forces,
-                            element.force_derivatives,
-                            element.force_velocity_derivatives,
-                            triangle_vertex_indices[ti]);
-    }
-
-    for (int bi : IndexRange(bend_force_elements.size())) {
-      BendForceElementBW element = bend_force_elements[bi];
-      accumulate_element<4>(element.forces,
-                            element.force_derivatives,
-                            element.force_velocity_derivatives,
-                            bend_vertex_indices[bi]);
-    }
-
-    for (int si : IndexRange(spring_force_elements.size())) {
-      SpringForceElement element = spring_force_elements[si];
-      accumulate_element<2>(element.forces,
-                            element.force_derivatives,
-                            element.force_velocity_derivatives,
-                            spring_vertex_indices[si]);
-    }
-
-    vertex_force_derivatives.setFromTriplets(force_derivative_triplets.begin(),
-                                             force_derivative_triplets.end());
-
-    vertex_force_velocity_derivatives.setFromTriplets(force_velocity_derivative_triplets.begin(),
-                                                      force_velocity_derivative_triplets.end());
   }
 };

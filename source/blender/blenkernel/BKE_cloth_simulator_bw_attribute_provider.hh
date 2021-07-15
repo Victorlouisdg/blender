@@ -309,9 +309,9 @@ class ClothBWAttributeProvider {
     /* Finding all edges that are not an edge of a face. */
     std::unordered_set<int> vertices_not_in_any_face = std::unordered_set<int>();
 
-    for (int i : IndexRange(amount_of_vertices)) {
-      vertices_not_in_any_face.insert(i);
-    }
+    // for (int i : IndexRange(amount_of_vertices)) {
+    //   vertices_not_in_any_face.insert(i);
+    // }
 
     Span<MLoopTri> looptris = get_mesh_looptris(mesh);
     for (const int looptri_index : looptris.index_range()) {
@@ -329,11 +329,6 @@ class ClothBWAttributeProvider {
       remove_if_found(v0_index, vertices_not_in_any_face);
       remove_if_found(v1_index, vertices_not_in_any_face);
       remove_if_found(v2_index, vertices_not_in_any_face);
-    }
-
-    std::cout << "Non face vertices" << std::endl;
-    for (const int vertex_index : vertices_not_in_any_face) {
-      std::cout << vertex_index << std::endl;
     }
 
     Vector<int2> edges_not_in_any_face = Vector<int2>();
