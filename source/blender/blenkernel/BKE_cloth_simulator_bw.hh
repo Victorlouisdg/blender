@@ -386,6 +386,9 @@ class ClothSimulatorBW {
     VectorXf y;
     {
       SCOPED_TIMER("solve");
+      solver.setTolerance(0.01);
+      solver.setMaxIterations(50);
+      solver.analyzePattern(LHS);
       y = solver.compute(LHS).solve(rhs);
     }
 
