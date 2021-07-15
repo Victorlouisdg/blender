@@ -276,3 +276,55 @@ class BendForceElementBW {
     }
   }
 };
+
+class SpringForceElement {
+  /* Simple damped spring that connects two points. Implementation based on:
+   * 1) https://blog.mmacklin.com/2012/05/04/implicitsprings/
+   * 2) https://www.tkim.graphics/DYNAMIC_DEFORMABLES/
+   *    course notes: 11.4 Penalty Forces for Two-Way Response
+   * 3) http://melax.github.io/dspring/dspring.html
+   * 4) "Stable but Responsive Cloth" by Choi & Ko, 3.1 Type 1 Interaction
+   *
+   * TODO: investigate setting (part of) the jacobian to zero when in compression as some of the
+   * sources do to improve stability of the solver. (The jacobians can make the system matrix
+   * indefinite.)
+   */
+
+ public:
+  array<float3, 2> forces;
+  array<array<float3x3, 2>, 2> force_derivatives;
+  array<array<float3x3, 2>, 2> force_velocity_derivatives;
+
+  void calculate(float k, float rest_length, float3 x0, float3 x1, float kd, float3 v0, float3 v1)
+  {
+    float3 spring_direction = x1 - x0; /* Points towards x1 */
+    float length = spring_direction.normalize_and_get_length();
+
+    float3 force = k * (length - rest_length) * spring_direction;
+
+    float3x3 spring_outer = float3x3::outer(spring_direction, spring_direction);
+
+    /* TODO  */
+    float3x3 force_derivative = -k * spring_outer - k * (1 - rest_length / length) *
+                                                        (float3x3::identity() - spring_outer);
+
+    float3 velocity_difference = v1 - v0;
+    float3 damping_force = kd * float3::dot(velocity_difference, spring_direction) *
+                           spring_direction;
+
+    float3x3 damping_derivative = -kd * spring_outer;
+
+    forces[0] = force + damping_force;
+    forces[1] = -force - damping_force;
+
+    force_derivatives[0][0] = force_derivative;
+    force_derivatives[1][1] = force_derivative;
+    force_derivatives[0][1] = -1.0f * force_derivative;
+    force_derivatives[1][0] = -1.0f * force_derivative;
+
+    force_velocity_derivatives[0][0] = damping_derivative;
+    force_velocity_derivatives[1][1] = damping_derivative;
+    force_velocity_derivatives[0][1] = -1.0f * damping_derivative;
+    force_velocity_derivatives[1][0] = -1.0f * damping_derivative;
+  }
+};

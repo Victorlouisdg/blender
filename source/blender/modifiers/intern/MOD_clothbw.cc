@@ -167,11 +167,11 @@ static Mesh *modifyMesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *
   if (framenr == 1) {
     simulator->initialize(*mesh, *modifier_data, *(ctx->object));
 
-    Object *collision_object = modifier_data->collision_object;
-    if (collision_object) {
-      Mesh *collision_mesh = BKE_object_get_pre_modified_mesh(collision_object);
-      // simulator->set_collision_mesh(*collision_mesh);
-    }
+    // Object *collision_object = modifier_data->collision_object;
+    // if (collision_object) {
+    //   Mesh *collision_mesh = BKE_object_get_pre_modified_mesh(collision_object);
+    //   simulator->set_collision_mesh(*collision_mesh);
+    // }
     return mesh;
   }
 

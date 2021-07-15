@@ -19,6 +19,8 @@
 #include "BKE_lib_query.h"
 #include "BKE_object.h"
 
+#include <unordered_set>
+
 typedef std::array<int, 2> int2;
 typedef std::array<int, 3> int3;
 typedef std::array<int, 4> int4;
@@ -38,6 +40,7 @@ class ClothBWAttributeProvider {
   int amount_of_vertices;
   int amount_of_triangles;
   int amount_of_bend_edges;
+  int amount_of_springs;
 
   /* State */
   Array<float3> vertex_positions;
@@ -55,11 +58,13 @@ class ClothBWAttributeProvider {
   Array<float> triangle_stretch_stiffness_v;
   Array<float> triangle_shear_stiffness;
   Array<float> bend_stiffness;
+  Array<float> spring_stiffness;
 
   Array<float> triangle_stretch_damping_u;
   Array<float> triangle_stretch_damping_v;
   Array<float> triangle_shear_damping;
   Array<float> bend_damping;
+  Array<float> spring_damping;
 
   Array<float3> triangle_normals;
   Array<float> triangle_area_factors;
@@ -68,6 +73,7 @@ class ClothBWAttributeProvider {
   Array<float3> triangle_wv_derivatives;
 
   Array<float> bend_rest_lengths;
+  Array<float> spring_rest_lengths;
 
   Vector<int> pinned_vertices;
 
@@ -86,6 +92,7 @@ class ClothBWAttributeProvider {
     initialize_vertex_masses_uniform(1.0);
     initialize_triangle_attributes(mesh, modifier_data);
     initialize_bend_attributes(mesh, modifier_data);
+    initialize_springs(mesh, modifier_data);
     initialize_pinned_vertices(mesh, modifier_data, cloth_object);
   }
 
@@ -112,6 +119,10 @@ class ClothBWAttributeProvider {
   {
     Span<MLoopTri> looptris = get_mesh_looptris(mesh);
     amount_of_triangles = looptris.size();
+
+    if (amount_of_triangles == 0) {
+      return;
+    }
 
     triangle_stretch_stiffness_u = Array<float>(amount_of_triangles, md.stretch_stiffness);
     triangle_stretch_stiffness_v = Array<float>(amount_of_triangles, md.stretch_stiffness);
@@ -217,11 +228,15 @@ class ClothBWAttributeProvider {
     return {inverted_delta_u, dwu_dx, dwv_dx};
   }
 
+  int2 minmax(int a, int b)
+  {
+    return {std::min(a, b), std::max(a, b)};
+  }
+
   void initialize_bend_attributes(const Mesh &mesh, const ClothBWModifierData &md)
   {
     /* Maps from the 2 vertices of a looptri edge to an oppossing vertex. */
-    std::multimap<std::pair<int, int>, int> looptri_edge_opposing_vertices =
-        std::multimap<std::pair<int, int>, int>();
+    std::multimap<int2, int> edges_opposing_vertices = std::multimap<int2, int>();
 
     Span<MLoopTri> looptris = get_mesh_looptris(mesh);
 
@@ -235,12 +250,9 @@ class ClothBWAttributeProvider {
       const int v2_index = mesh.mloop[v2_loop].v;
 
       /* bend edges. */
-      looptri_edge_opposing_vertices.insert(
-          std::pair<std::pair<int, int>, int>(std::minmax(v0_index, v1_index), v2_index));
-      looptri_edge_opposing_vertices.insert(
-          std::pair<std::pair<int, int>, int>(std::minmax(v0_index, v2_index), v1_index));
-      looptri_edge_opposing_vertices.insert(
-          std::pair<std::pair<int, int>, int>(std::minmax(v1_index, v2_index), v0_index));
+      edges_opposing_vertices.insert(std::pair<int2, int>(minmax(v0_index, v1_index), v2_index));
+      edges_opposing_vertices.insert(std::pair<int2, int>(minmax(v0_index, v2_index), v1_index));
+      edges_opposing_vertices.insert(std::pair<int2, int>(minmax(v1_index, v2_index), v0_index));
     }
 
     Vector<int4> bend_indices_vector = Vector<int4>();
@@ -248,22 +260,21 @@ class ClothBWAttributeProvider {
 
     /* Here we need to check which looptri edges have 2 opposing vertices, these edges will
      * become bend edges. */
-    for (std::multimap<std::pair<int, int>, int>::iterator it =
-             looptri_edge_opposing_vertices.begin();
-         it != looptri_edge_opposing_vertices.end();
+    for (std::multimap<int2, int>::iterator it = edges_opposing_vertices.begin();
+         it != edges_opposing_vertices.end();
          it++) {
-      std::pair<int, int> edge = it->first;
+      int2 edge = it->first;
 
       /* Note that indices of the shared edge are stored in position 1 and 2, this is the
        * convention used in the "Implementing Baraff Wikin" by David Pritchard. */
       int v0 = it->second;
-      int v1 = edge.first;
-      int v2 = edge.second;
+      int v1 = edge[0];
+      int v2 = edge[1];
 
-      std::multimap<std::pair<int, int>, int>::iterator it_next = std::next(it, 1);
+      std::multimap<int2, int>::iterator it_next = std::next(it, 1);
 
-      if (it_next != looptri_edge_opposing_vertices.end()) {
-        std::pair<int, int> edge_next = it_next->first;
+      if (it_next != edges_opposing_vertices.end()) {
+        int2 edge_next = it_next->first;
         if (edge == edge_next) { /* This means two looptris share this edge. */
           int v3 = it_next->second;
           bend_indices_vector.append(int4({v0, v1, v2, v3}));
@@ -283,6 +294,74 @@ class ClothBWAttributeProvider {
 
     float bend_damping_value = md.bend_stiffness * md.bend_damping_factor;
     bend_damping = Array<float>(amount_of_bend_edges, bend_damping_value);
+  }
+
+  void remove_if_found(int a, std::unordered_set<int> set)
+  {
+    auto result = set.find(a);
+    if (result != set.end()) {
+      set.erase(result);
+    }
+  }
+
+  void initialize_springs(const Mesh &mesh, const ClothBWModifierData &md)
+  {
+    /* Finding all edges that are not an edge of a face. */
+    std::unordered_set<int> vertices_not_in_any_face = std::unordered_set<int>();
+
+    for (int i : IndexRange(amount_of_vertices)) {
+      vertices_not_in_any_face.insert(i);
+    }
+
+    Span<MLoopTri> looptris = get_mesh_looptris(mesh);
+    for (const int looptri_index : looptris.index_range()) {
+      const MLoopTri &looptri = looptris[looptri_index];
+      const int v0_loop_index = looptri.tri[0];
+      const int v1_loop_index = looptri.tri[1];
+      const int v2_loop_index = looptri.tri[2];
+      const MLoop v0_loop = mesh.mloop[v0_loop_index];
+      const MLoop v1_loop = mesh.mloop[v1_loop_index];
+      const MLoop v2_loop = mesh.mloop[v2_loop_index];
+      const int v0_index = v0_loop.v;
+      const int v1_index = v1_loop.v;
+      const int v2_index = v2_loop.v;
+
+      remove_if_found(v0_index, vertices_not_in_any_face);
+      remove_if_found(v1_index, vertices_not_in_any_face);
+      remove_if_found(v2_index, vertices_not_in_any_face);
+    }
+
+    std::cout << "Non face vertices" << std::endl;
+    for (const int vertex_index : vertices_not_in_any_face) {
+      std::cout << vertex_index << std::endl;
+    }
+
+    Vector<int2> edges_not_in_any_face = Vector<int2>();
+
+    for (int i : IndexRange(mesh.totedge)) {
+      const MEdge &edge = mesh.medge[i];
+
+      if (vertices_not_in_any_face.find(edge.v1) != vertices_not_in_any_face.end() ||
+          vertices_not_in_any_face.find(edge.v2) != vertices_not_in_any_face.end()) {
+        edges_not_in_any_face.append(int2({(int)edge.v1, (int)edge.v2}));
+      }
+    }
+
+    spring_vertex_indices = Array<int2>(edges_not_in_any_face.as_span());
+    amount_of_springs = spring_vertex_indices.size();
+    spring_rest_lengths = Array<float>(amount_of_springs);
+    spring_stiffness = Array<float>(amount_of_springs);
+    spring_damping = Array<float>(amount_of_springs);
+
+    for (int i : IndexRange(amount_of_springs)) {
+      int2 spring = spring_vertex_indices[i];
+      float3 x0 = vertex_positions[spring[0]];
+      float3 x1 = vertex_positions[spring[1]];
+
+      spring_rest_lengths[i] = (x0 - x1).length();
+      spring_stiffness[i] = md.spring_stiffness;
+      spring_damping[i] = md.spring_damping_factor * md.spring_stiffness;
+    }
   }
 
   void initialize_pinned_vertices(const Mesh &mesh,
@@ -322,6 +401,11 @@ class ClothBWAttributeProvider {
     return amount_of_bend_edges;
   }
 
+  int get_amount_of_springs()
+  {
+    return amount_of_springs;
+  }
+
   MutableSpan<float3> get_vertex_positions()
   {
     return vertex_positions;
@@ -357,6 +441,11 @@ class ClothBWAttributeProvider {
     return bend_stiffness;
   }
 
+  Span<float> get_spring_stiffness()
+  {
+    return spring_stiffness;
+  }
+
   Span<float> get_triangle_stretch_damping_u()
   {
     return triangle_stretch_damping_u;
@@ -375,6 +464,11 @@ class ClothBWAttributeProvider {
   Span<float> get_bend_damping()
   {
     return bend_damping;
+  }
+
+  Span<float> get_spring_damping()
+  {
+    return spring_damping;
   }
 
   Span<float> get_triangle_area_factors()
@@ -407,9 +501,19 @@ class ClothBWAttributeProvider {
     return bend_vertex_indices;
   }
 
+  Span<int2> get_spring_vertex_indices()
+  {
+    return spring_vertex_indices;
+  }
+
   Span<float> get_bend_rest_lengths()
   {
     return bend_rest_lengths;
+  }
+
+  Span<float> get_spring_rest_lengths()
+  {
+    return spring_rest_lengths;
   }
 
   Vector<int> get_pinned_vertices()
