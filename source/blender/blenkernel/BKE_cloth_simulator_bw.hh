@@ -5,6 +5,7 @@
 
 #include "BLI_index_range.hh"
 #include "BLI_span.hh"
+#include "BLI_task.hh"
 #include "BLI_timeit.hh"
 #include "BLI_vector.hh"
 
@@ -240,73 +241,81 @@ class ClothSimulatorBW {
 
   void calculate_local_forces_and_derivatives()
   {
-    for (int i : IndexRange(amount_of_vertices)) {
-      float vertex_mass = vertex_masses[i];
-      gravity_force_elements[i].calculate(vertex_mass, standard_gravity);
-    }
+    parallel_for(IndexRange(amount_of_vertices), 512, [&](IndexRange range) {
+      for (int i : range) {
+        float vertex_mass = vertex_masses[i];
+        gravity_force_elements[i].calculate(vertex_mass, standard_gravity);
+      }
+    });
 
-    for (int ti : IndexRange(amount_of_triangles)) {
-      int3 vertex_indices = triangle_vertex_indices[ti];
-      float3 x0 = vertex_positions[vertex_indices[0]];
-      float3 x1 = vertex_positions[vertex_indices[1]];
-      float3 x2 = vertex_positions[vertex_indices[2]];
-      float2x2 delta_u = triangle_inverted_delta_u_matrices[ti];
-      deformation_gradients[ti].calculate(x0, x1, x2, delta_u);
-      DeformationGradient F = deformation_gradients[ti];
+    parallel_for(IndexRange(amount_of_triangles), 512, [&](IndexRange range) {
+      for (int ti : range) {
+        int3 vertex_indices = triangle_vertex_indices[ti];
+        float3 x0 = vertex_positions[vertex_indices[0]];
+        float3 x1 = vertex_positions[vertex_indices[1]];
+        float3 x2 = vertex_positions[vertex_indices[2]];
+        float2x2 delta_u = triangle_inverted_delta_u_matrices[ti];
+        deformation_gradients[ti].calculate(x0, x1, x2, delta_u);
+        DeformationGradient F = deformation_gradients[ti];
 
-      float area_factor = triangle_area_factors[ti];
-      float ku = triangle_stretch_stiffness_u[ti];
-      float kv = triangle_stretch_stiffness_v[ti];
-      float3 dwu_dx = triangle_wu_derivatives[ti];
-      float3 dwv_dx = triangle_wv_derivatives[ti];
-      float kdu = triangle_stretch_damping_u[ti];
-      float kdv = triangle_stretch_damping_v[ti];
+        float area_factor = triangle_area_factors[ti];
+        float ku = triangle_stretch_stiffness_u[ti];
+        float kv = triangle_stretch_stiffness_v[ti];
+        float3 dwu_dx = triangle_wu_derivatives[ti];
+        float3 dwv_dx = triangle_wv_derivatives[ti];
+        float kdu = triangle_stretch_damping_u[ti];
+        float kdv = triangle_stretch_damping_v[ti];
 
-      float3 v0 = vertex_velocities[vertex_indices[0]];
-      float3 v1 = vertex_velocities[vertex_indices[1]];
-      float3 v2 = vertex_velocities[vertex_indices[2]];
-      array<float3, 3> velocities = {v0, v1, v2};
+        float3 v0 = vertex_velocities[vertex_indices[0]];
+        float3 v1 = vertex_velocities[vertex_indices[1]];
+        float3 v2 = vertex_velocities[vertex_indices[2]];
+        array<float3, 3> velocities = {v0, v1, v2};
 
-      stretch_force_elements[ti].calculate(
-          ku, kv, area_factor, F, dwu_dx, dwv_dx, kdu, kdv, velocities);
+        stretch_force_elements[ti].calculate(
+            ku, kv, area_factor, F, dwu_dx, dwv_dx, kdu, kdv, velocities);
 
-      float k_shear = triangle_shear_stiffness[ti];
-      float kd_shear = triangle_shear_damping[ti];
-      shear_force_elements[ti].calculate(
-          k_shear, area_factor, F, dwu_dx, dwv_dx, kd_shear, velocities);
-    }
+        float k_shear = triangle_shear_stiffness[ti];
+        float kd_shear = triangle_shear_damping[ti];
+        shear_force_elements[ti].calculate(
+            k_shear, area_factor, F, dwu_dx, dwv_dx, kd_shear, velocities);
+      }
+    });
 
-    for (int bi : IndexRange(amount_of_bend_edges)) {
-      int4 vertex_indices = bend_vertex_indices[bi];
-      float3 x0 = vertex_positions[vertex_indices[0]];
-      float3 x1 = vertex_positions[vertex_indices[1]];
-      float3 x2 = vertex_positions[vertex_indices[2]];
-      float3 x3 = vertex_positions[vertex_indices[3]];
-      float k = bend_stiffness[bi];
-      float kd = bend_damping[bi];
+    parallel_for(IndexRange(amount_of_bend_edges), 512, [&](IndexRange range) {
+      for (int bi : range) {
+        int4 vertex_indices = bend_vertex_indices[bi];
+        float3 x0 = vertex_positions[vertex_indices[0]];
+        float3 x1 = vertex_positions[vertex_indices[1]];
+        float3 x2 = vertex_positions[vertex_indices[2]];
+        float3 x3 = vertex_positions[vertex_indices[3]];
+        float k = bend_stiffness[bi];
+        float kd = bend_damping[bi];
 
-      float3 v0 = vertex_velocities[vertex_indices[0]];
-      float3 v1 = vertex_velocities[vertex_indices[1]];
-      float3 v2 = vertex_velocities[vertex_indices[2]];
-      float3 v3 = vertex_velocities[vertex_indices[3]];
-      array<float3, 4> velocities = {v0, v1, v2, v3};
+        float3 v0 = vertex_velocities[vertex_indices[0]];
+        float3 v1 = vertex_velocities[vertex_indices[1]];
+        float3 v2 = vertex_velocities[vertex_indices[2]];
+        float3 v3 = vertex_velocities[vertex_indices[3]];
+        array<float3, 4> velocities = {v0, v1, v2, v3};
 
-      bend_force_elements[bi].calculate(k, x0, x1, x2, x3, kd, velocities);
-    }
+        bend_force_elements[bi].calculate(k, x0, x1, x2, x3, kd, velocities);
+      }
+    });
 
-    for (int si : IndexRange(amount_of_springs)) {
-      int2 vertex_indices = spring_vertex_indices[si];
-      float3 x0 = vertex_positions[vertex_indices[0]];
-      float3 x1 = vertex_positions[vertex_indices[1]];
-      float k = spring_stiffness[si];
-      float rest_length = spring_rest_lengths[si];
+    parallel_for(IndexRange(amount_of_springs), 512, [&](IndexRange range) {
+      for (int si : range) {
+        int2 vertex_indices = spring_vertex_indices[si];
+        float3 x0 = vertex_positions[vertex_indices[0]];
+        float3 x1 = vertex_positions[vertex_indices[1]];
+        float k = spring_stiffness[si];
+        float rest_length = spring_rest_lengths[si];
 
-      float kd = spring_damping[si];
-      float3 v0 = vertex_velocities[vertex_indices[0]];
-      float3 v1 = vertex_velocities[vertex_indices[1]];
+        float kd = spring_damping[si];
+        float3 v0 = vertex_velocities[vertex_indices[0]];
+        float3 v1 = vertex_velocities[vertex_indices[1]];
 
-      spring_force_elements[si].calculate(k, rest_length, x0, x1, kd, v0, v1);
-    }
+        spring_force_elements[si].calculate(k, rest_length, x0, x1, kd, v0, v1);
+      }
+    });
   }
 
   void integrate_explicit_forward_euler()
