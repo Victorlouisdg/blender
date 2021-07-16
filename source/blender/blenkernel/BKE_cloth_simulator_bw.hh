@@ -226,16 +226,17 @@ class ClothSimulatorBW {
 
   void initialize_mass_matrix()
   {
+    SCOPED_TIMER("initialize_mass_matrix");
     mass_matrix = SparseMatrix<float>(system_size, system_size);
+    mass_matrix.reserve(Eigen::VectorXi::Constant(system_size, 1));
 
-    Array<Triplet> triplets = Array<Triplet>(system_size);
     for (int i : IndexRange(amount_of_vertices)) {
       for (int s : IndexRange(3)) {
         int index = 3 * i + s;
-        triplets[index] = Triplet(index, index, vertex_masses[i]);
+        mass_matrix.insert(index, index) = vertex_masses[i];
       }
     }
-    mass_matrix.setFromTriplets(triplets.begin(), triplets.end());
+    mass_matrix.makeCompressed();
   }
 
   void calculate_local_forces_and_derivatives()
